@@ -6,35 +6,216 @@
 //
 
 import SwiftUI
-import RealityKit
 
-struct ContentView : View {
+enum ARMode { case create, load }
+
+struct ContentView: View {
+    let mode: ARMode
+
+    // Create mode state
+    @State private var isArmed = false
+    @State private var clearTick = 0
+
+    // Save popup (Create mode)
+    @State private var showSaveSheet = false
+    @State private var roomId = ""
+
+    // Load mode state
+    @State private var selectedRoom: String? = nil    // set after user chooses from list
+    @State private var didAutoLoad = false            // prevent duplicate auto-load
 
     var body: some View {
-        RealityView { content in
+        Group {
+            if mode == .load && selectedRoom == nil {
+                // 1) ROOM PICKER FIRST (no AR yet)
+                RoomPickerView(
+                    rooms: listSavedRooms(),
+                    onPick: { name in
+                        selectedRoom = name
+                        didAutoLoad = false
+                    }
+                )
+            } else {
+                // 2) AR SCENE (Create flow, or Load after a selection)
+                VStack {
+                    ARViewContainer(
+                        isArmed: $isArmed,
+                        clearTick: $clearTick,
+                        onDisarm: { isArmed = false }
+                    )
+                    .edgesIgnoringSafeArea(.all)
+                    .onAppear {
+                        // Auto-load once when entering AR with a chosen room
+                        if mode == .load, let name = selectedRoom, didAutoLoad == false {
+                            NotificationCenter.default.post(
+                                name: .loadWorldMap,
+                                object: nil,
+                                userInfo: ["roomId": name]
+                            )
+                            didAutoLoad = true
+                        }
+                    }
 
-            // Create a cube model
-            let model = Entity()
-            let mesh = MeshResource.generateBox(size: 0.1, cornerRadius: 0.005)
-            let material = SimpleMaterial(color: .gray, roughness: 0.15, isMetallic: true)
-            model.components.set(ModelComponent(mesh: mesh, materials: [material]))
-            model.position = [0, 0.05, 0]
+                    HStack(spacing: 12) {
+                        if mode == .create {
+                            Button {
+                                clearTick &+= 1
+                            } label: {
+                                Label("Clear", systemImage: "trash")
+                                    .padding(.horizontal, 14).padding(.vertical, 10)
+                                    .background(.ultraThinMaterial)
+                                    .cornerRadius(12)
+                            }
 
-            // Create horizontal plane anchor for the content
-            let anchor = AnchorEntity(.plane(.horizontal, classification: .any, minimumBounds: SIMD2<Float>(0.2, 0.2)))
-            anchor.addChild(model)
+                            Button {
+                                isArmed.toggle()
+                            } label: {
+                                Label(isArmed ? "Tap to Place…" : "Place",
+                                      systemImage: isArmed ? "hand.point.up.left" : "plus.circle")
+                                    .padding(.horizontal, 14).padding(.vertical, 10)
+                                    .background(isArmed ? Color.yellow.opacity(0.3)
+                                                        : Color.blue.opacity(0.25))
+                                    .cornerRadius(12)
+                            }
 
-            // Add the horizontal plane anchor to the scene
-            content.add(anchor)
+                            Button {
+                                showSaveSheet = true
+                            } label: {
+                                Label("Save Room", systemImage: "square.and.arrow.down")
+                                    .padding(.horizontal, 14).padding(.vertical, 10)
+                                    .background(.ultraThinMaterial)
+                                    .cornerRadius(12)
+                            }
 
-            content.camera = .spatialTracking
+                        } else {
+                            // Load mode control bar (after a room is chosen)
+                            if let name = selectedRoom {
+                                Button {
+                                    NotificationCenter.default.post(
+                                        name: .loadWorldMap,
+                                        object: nil,
+                                        userInfo: ["roomId": name]
+                                    )
+                                } label: {
+                                    Label("Reload \(name)", systemImage: "arrow.clockwise")
+                                        .padding(.horizontal, 14).padding(.vertical, 10)
+                                        .background(.ultraThinMaterial)
+                                        .cornerRadius(12)
+                                }
 
+                                Button {
+                                    // Go back to picker
+                                    selectedRoom = nil
+                                    didAutoLoad = false
+                                } label: {
+                                    Label("Change Room", systemImage: "list.bullet")
+                                        .padding(.horizontal, 14).padding(.vertical, 10)
+                                        .background(.ultraThinMaterial)
+                                        .cornerRadius(12)
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(.ultraThinMaterial)
+                }
+                // Create-mode: Save popup
+                .sheet(isPresented: $showSaveSheet) {
+                    NavigationStack {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Name this room").font(.headline)
+
+                            TextField("e.g. living-room", text: $roomId)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .textFieldStyle(.roundedBorder)
+
+                            Spacer()
+                        }
+                        .padding()
+                        .navigationTitle("Save Room")
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Cancel") { showSaveSheet = false }
+                            }
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Save") {
+                                    let trimmed = roomId.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    guard !trimmed.isEmpty else { return }
+                                    NotificationCenter.default.post(
+                                        name: .saveWorldMap,
+                                        object: nil,
+                                        userInfo: ["roomId": trimmed]
+                                    )
+                                    showSaveSheet = false
+                                }
+                                .disabled(roomId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                    }
+                }
+            }
         }
-        .edgesIgnoringSafeArea(.all)
     }
 
+    // MARK: - Helpers
+
+    /// Lists saved rooms by scanning the app's Documents directory for files
+    /// like `room_<name>.arworldmap` (or any `.arworldmap`).
+    private func listSavedRooms() -> [String] {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        let names: [String] = urls.compactMap { url in
+            guard url.pathExtension.lowercased() == "arworldmap" else { return nil }
+            var base = url.deletingPathExtension().lastPathComponent
+            if base.hasPrefix("room_") { base.removeFirst("room_".count) }
+            return base
+        }
+        return names.sorted()
+    }
 }
 
-#Preview {
-    ContentView()
+// MARK: - Inline room picker
+
+private struct RoomPickerView: View {
+    let rooms: [String]
+    var onPick: (String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if rooms.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "tray")
+                            .font(.system(size: 44))
+                        Text("No saved rooms yet")
+                            .font(.headline)
+                        Text("Create a room first, then save it to see it here.")
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(rooms, id: \.self) { name in
+                        Button {
+                            onPick(name)
+                        } label: {
+                            HStack {
+                                Image(systemName: "cube.transparent")
+                                Text(name)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("Load Room")
+        }
+    }
 }

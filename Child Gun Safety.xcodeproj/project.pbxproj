@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		50D8C5272E8355A600F906DF /* Secrets.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 50D8C5262E8355A600F906DF /* Secrets.xcconfig */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		50D8C5042E81FC6500F906DF /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		50D8C4F32E81FC6400F906DF /* Child Gun Safety.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Child Gun Safety.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		50D8C5032E81FC6500F906DF /* Child Gun SafetyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Child Gun SafetyTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		50D8C50D2E81FC6500F906DF /* Child Gun SafetyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Child Gun SafetyUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		50D8C5262E8355A600F906DF /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +80,7 @@
 		50D8C4EA2E81FC6400F906DF = {
 			isa = PBXGroup;
 			children = (
+				50D8C5262E8355A600F906DF /* Secrets.xcconfig */,
 				50D8C4F52E81FC6400F906DF /* Child Gun Safety */,
 				50D8C5062E81FC6500F906DF /* Child Gun SafetyTests */,
 				50D8C5102E81FC6500F906DF /* Child Gun SafetyUITests */,
@@ -212,6 +218,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				50D8C5272E8355A600F906DF /* Secrets.xcconfig in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -390,6 +397,7 @@
 		};
 		50D8C5182E81FC6500F906DF /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 50D8C5262E8355A600F906DF /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -399,7 +407,11 @@
 				DEVELOPMENT_TEAM = 9986YF7SP4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Child-Gun-Safety-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Child Gun Safety";
 				INFOPLIST_KEY_NSCameraUsageDescription = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "This app needs microphone access for the voice coach.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "This app transcribes your speech to enable the voice coach.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = arkit;
@@ -421,6 +433,7 @@
 		};
 		50D8C5192E81FC6500F906DF /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 50D8C5262E8355A600F906DF /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -430,7 +443,11 @@
 				DEVELOPMENT_TEAM = 9986YF7SP4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Child-Gun-Safety-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Child Gun Safety";
 				INFOPLIST_KEY_NSCameraUsageDescription = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "This app needs microphone access for the voice coach.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "This app transcribes your speech to enable the voice coach.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = arkit;
