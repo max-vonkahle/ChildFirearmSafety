@@ -26,14 +26,10 @@ final class VoiceCoach: ObservableObject {
             speak: { [weak self] text in self?.tts.speak(text) },
             stopTTS: { [weak self] in self?.tts.stop() },
             pauseASR: { [weak self] in
-                guard let self else { return }
-                self.asr.setWantsRunning(false)
-                self.asr.stop()
+                self?.enterSpeakingState()
             },
             resumeASR: { [weak self] in
-                guard let self else { return }
-                self.asr.setWantsRunning(true)
-                try? self.asr.start()
+                self?.resumeListening()
             }
         )
 
@@ -50,6 +46,7 @@ final class VoiceCoach: ObservableObject {
     Focus only on: don't touch it, move away, and tell a trusted adult. Keep replies short (2–4 sentences).
     """
     private var llmActive = false
+    private var sessionActive = false
 
     init() {
         // ASR callbacks may fire off-main; hop to main
@@ -85,7 +82,6 @@ final class VoiceCoach: ObservableObject {
     private func interruptLLMAndTTS() {
         cancelStream()
         director.clearAll()
-        llmActive = false
     }
 
     /// Map DialogueIntent (from Orchestrator) to short, templated TTS lines.
@@ -125,11 +121,14 @@ final class VoiceCoach: ObservableObject {
                 try VoicePerms.activateAudioSession()
                 try await VoicePerms.requestMicrophone()     // ⬅️ add this
                 try await VoicePerms.requestSpeech()
+                sessionActive = true
                 VoicePerms.setModeListening()                // ⬅️ nice-to-have
                 asr.setWantsRunning(true)
                 try asr.start()
                 state = .listening
             } catch {
+                sessionActive = false
+                asr.setWantsRunning(false)
                 transcript.append("\n[ASR error] \(error.localizedDescription)")
                 state = .idle
             }
@@ -137,6 +136,8 @@ final class VoiceCoach: ObservableObject {
     }
 
     func stopSession() {
+        sessionActive = false
+        asr.setWantsRunning(false)
         asr.stop()
         cancelStream()
         director.clearAll()
@@ -172,8 +173,7 @@ final class VoiceCoach: ObservableObject {
 
     private func handleUserUtterance(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            try? asr.start()
-            state = .listening
+            resumeListening(force: true)
             return
         }
 
@@ -224,12 +224,7 @@ final class VoiceCoach: ObservableObject {
                     Task { @MainActor in
                         guard let self = self else { return }
                         self.llmActive = false
-                        if self.director.isSpeaking == false {
-                            self.state = .listening
-                            VoicePerms.setModeListening()
-                            self.asr.setWantsRunning(true)
-                            try? self.asr.start()
-                        }
+                        self.resumeListening()
                     }
                 },
                 onError: { [weak self] err in
@@ -238,10 +233,7 @@ final class VoiceCoach: ObservableObject {
                         self.llmActive = false
                         self.append("\n[error] \(err.localizedDescription)")
                         self.director.clearAll()
-                        self.state = .listening
-                        VoicePerms.setModeListening()
-                        self.asr.setWantsRunning(true)
-                        try? self.asr.start()
+                        self.resumeListening(force: true)
                     }
                 }
             )
@@ -252,17 +244,35 @@ final class VoiceCoach: ObservableObject {
         // If the user talks while we’re speaking, stop everything and listen.
         director.clearAll()
         cancelStream()
-        llmActive = false
-        state = .listening
-        VoicePerms.setModeListening()
-        asr.setWantsRunning(true)
-        try? asr.start()
+        resumeListening(force: true)
         append("\n[barge-in]")
     }
 
     private func cancelStream() {
         streamHandle?.cancel()
         streamHandle = nil
+        llmActive = false
+    }
+
+    private func enterSpeakingState() {
+        state = .speaking
+        VoicePerms.setModeSpeaking()
+        asr.setWantsRunning(false)
+        asr.stop()
+    }
+
+    private func resumeListening(force: Bool = false) {
+        if sessionActive == false {
+            if director.isSpeaking == false { state = .idle }
+            return
+        }
+        if !force {
+            guard llmActive == false, director.isSpeaking == false else { return }
+        }
+        VoicePerms.setModeListening()
+        asr.setWantsRunning(true)
+        try? asr.start()
+        state = .listening
     }
 
     // Since the whole class is @MainActor, no extra annotation needed here.
@@ -277,21 +287,24 @@ final class VoiceCoach: ObservableObject {
             systemPrompt: systemPrompt,
             temperature: 0.2,
             handlers: .init(
-                onOpen: { [weak self] in Task { @MainActor in self?.transcript.append("\nCoach: ") } },
+                onOpen: { [weak self] in Task { @MainActor in
+                    guard let self = self else { return }
+                    self.llmActive = true
+                    self.transcript.append("\nCoach: ")
+                } },
                 onToken: { [weak self] chunk in Task { @MainActor in self?.transcript.append(chunk) } },
                 onSentence: { [weak self] sentence in Task { @MainActor in self?.director.enqueue(sentence) } },
                 onDone: { [weak self] in Task { @MainActor in
                     guard let self = self else { return }
-                    if self.director.isSpeaking == false {
-                        try? self.asr.start()
-                        self.state = .listening
-                    }
+                    self.llmActive = false
+                    self.resumeListening()
                 }},
                 onError: { [weak self] err in Task { @MainActor in
-                    self?.transcript.append("\n[LLM error] \(err.localizedDescription)")
-                    self?.director.clearAll()
-                    try? self?.asr.start()
-                    self?.state = .listening
+                    guard let self = self else { return }
+                    self.transcript.append("\n[LLM error] \(err.localizedDescription)")
+                    self.director.clearAll()
+                    self.llmActive = false
+                    self.resumeListening(force: true)
                 }}
             )
         )
