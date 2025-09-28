@@ -16,6 +16,7 @@ final class SpeechDirector {
 
     private var queue: [Utterance] = []
     private var speaking = false
+    private var suppressNextFinish = false
 
     // Injected I/O closures so we don't depend on concrete TTS/ASR types
     private let speakFunc: (String) -> Void
@@ -38,6 +39,10 @@ final class SpeechDirector {
         pauseASR()
     }
     func notifyTTSFinish() {
+        if suppressNextFinish {
+            suppressNextFinish = false
+            return
+        }
         speaking = false
         dequeue()
         if !speaking && queue.isEmpty {
@@ -49,6 +54,7 @@ final class SpeechDirector {
         let u = Utterance(text: text, priority: priority)
         if priority == .scriptedHigh {
             // Preempt: drop anything currently queued and stop current TTS
+            if speaking { suppressNextFinish = true }
             queue.removeAll()
             stopTTS()
             speaking = false
@@ -69,6 +75,7 @@ final class SpeechDirector {
     var isSpeaking: Bool { speaking || !queue.isEmpty }
     func clearAll() {
         queue.removeAll()
+        if speaking { suppressNextFinish = true }
         stopTTS()
         speaking = false
     }
