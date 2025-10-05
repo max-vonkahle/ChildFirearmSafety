@@ -11,6 +11,7 @@ enum ARMode { case create, load }
 
 struct ContentView: View {
     let mode: ARMode
+    @Binding var cardboardMode: Bool
 
     // Create mode state
     @State private var isArmed = false
@@ -20,9 +21,14 @@ struct ContentView: View {
     @State private var showSaveSheet = false
     @State private var roomId = ""
 
+
     // Load mode state
     @State private var selectedRoom: String? = nil    // set after user chooses from list
     @State private var didAutoLoad = false            // prevent duplicate auto-load
+
+    // Overlay controls visibility
+    @State private var showControls = false
+    @State private var autoHideTask: Task<Void, Never>? = nil
 
     var body: some View {
         Group {
@@ -38,12 +44,27 @@ struct ContentView: View {
             } else {
                 // 2) AR SCENE (Create flow, or Load after a selection)
                 VStack {
-                    ARViewContainer(
-                        isArmed: $isArmed,
-                        clearTick: $clearTick,
-                        onDisarm: { isArmed = false }
-                    )
-                    .edgesIgnoringSafeArea(.all)
+                    ZStack {
+                        ARViewContainer(
+                            isArmed: $isArmed,
+                            clearTick: $clearTick,
+                            onDisarm: { isArmed = false }
+                        )
+                        .edgesIgnoringSafeArea(.all)
+                        .scaleEffect(cardboardMode ? 0.98 : 1.0) // slight inset for lens edges
+
+                        if cardboardMode {
+                            StereoARContainer()                 // true stereo
+                                .ignoresSafeArea()
+                            CardboardOverlay()                  // keep your overlay for divider/edge masks
+                                .ignoresSafeArea()
+                        } else {
+                            ARViewContainer(isArmed: $isArmed,
+                                            clearTick: $clearTick,
+                                            onDisarm: { isArmed = false })
+                                .ignoresSafeArea()
+                        }
+                    }
                     .onAppear {
                         // Auto-load once when entering AR with a chosen room
                         if mode == .load, let name = selectedRoom, didAutoLoad == false {
@@ -55,71 +76,91 @@ struct ContentView: View {
                             didAutoLoad = true
                         }
                     }
-
-                    HStack(spacing: 12) {
-                        if mode == .create {
-                            Button {
-                                clearTick &+= 1
-                            } label: {
-                                Label("Clear", systemImage: "trash")
-                                    .padding(.horizontal, 14).padding(.vertical, 10)
-                                    .background(.ultraThinMaterial)
-                                    .cornerRadius(12)
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showControls.toggle()
                             }
-
-                            Button {
-                                isArmed.toggle()
-                            } label: {
-                                Label(isArmed ? "Tap to Place…" : "Place",
-                                      systemImage: isArmed ? "hand.point.up.left" : "plus.circle")
-                                    .padding(.horizontal, 14).padding(.vertical, 10)
-                                    .background(isArmed ? Color.yellow.opacity(0.3)
-                                                        : Color.blue.opacity(0.25))
-                                    .cornerRadius(12)
-                            }
-
-                            Button {
-                                showSaveSheet = true
-                            } label: {
-                                Label("Save Room", systemImage: "square.and.arrow.down")
-                                    .padding(.horizontal, 14).padding(.vertical, 10)
-                                    .background(.ultraThinMaterial)
-                                    .cornerRadius(12)
-                            }
-
-                        } else {
-                            // Load mode control bar (after a room is chosen)
-                            if let name = selectedRoom {
-                                Button {
-                                    NotificationCenter.default.post(
-                                        name: .loadWorldMap,
-                                        object: nil,
-                                        userInfo: ["roomId": name]
-                                    )
-                                } label: {
-                                    Label("Reload \(name)", systemImage: "arrow.clockwise")
-                                        .padding(.horizontal, 14).padding(.vertical, 10)
-                                        .background(.ultraThinMaterial)
-                                        .cornerRadius(12)
-                                }
-
-                                Button {
-                                    // Go back to picker
-                                    selectedRoom = nil
-                                    didAutoLoad = false
-                                } label: {
-                                    Label("Change Room", systemImage: "list.bullet")
-                                        .padding(.horizontal, 14).padding(.vertical, 10)
-                                        .background(.ultraThinMaterial)
-                                        .cornerRadius(12)
-                                }
+                            if showControls {
+                                scheduleAutoHideControls()
+                            } else {
+                                autoHideTask?.cancel()
+                                autoHideTask = nil
                             }
                         }
+                    )
+                    .overlay(alignment: .bottom) {
+                        if showControls {
+                            HStack(spacing: 12) {
+                                if mode == .create {
+                                    Button {
+                                        clearTick &+= 1
+                                    } label: {
+                                        Label("Clear", systemImage: "trash")
+                                            .padding(.horizontal, 14).padding(.vertical, 10)
+                                            .background(.ultraThinMaterial)
+                                            .cornerRadius(12)
+                                    }
+
+                                    Button {
+                                        isArmed.toggle()
+                                    } label: {
+                                        Label(isArmed ? "Tap to Place…" : "Place",
+                                              systemImage: isArmed ? "hand.point.up.left" : "plus.circle")
+                                            .padding(.horizontal, 14).padding(.vertical, 10)
+                                            .background(isArmed ? Color.yellow.opacity(0.3)
+                                                                : Color.blue.opacity(0.25))
+                                            .cornerRadius(12)
+                                    }
+
+                                    Button {
+                                        showSaveSheet = true
+                                    } label: {
+                                        Label("Save Room", systemImage: "square.and.arrow.down")
+                                            .padding(.horizontal, 14).padding(.vertical, 10)
+                                            .background(.ultraThinMaterial)
+                                            .cornerRadius(12)
+                                    }
+
+                                } else {
+                                    // Load mode control bar (after a room is chosen)
+                                    if let name = selectedRoom {
+                                        Button {
+                                            NotificationCenter.default.post(
+                                                name: .loadWorldMap,
+                                                object: nil,
+                                                userInfo: ["roomId": name]
+                                            )
+                                        } label: {
+                                            Label("Reload \(name)", systemImage: "arrow.clockwise")
+                                                .padding(.horizontal, 14).padding(.vertical, 10)
+                                                .background(.ultraThinMaterial)
+                                                .cornerRadius(12)
+                                        }
+
+                                        Button {
+                                            // Go back to picker
+                                            selectedRoom = nil
+                                            didAutoLoad = false
+                                        } label: {
+                                            Label("Change Room", systemImage: "list.bullet")
+                                                .padding(.horizontal, 14).padding(.vertical, 10)
+                                                .background(.ultraThinMaterial)
+                                                .cornerRadius(12)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding()
+                            .background(.ultraThinMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .padding(.bottom, 16)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .animation(.easeInOut(duration: 0.2), value: showControls)
+                        }
                     }
-                    .padding()
-                    .background(.ultraThinMaterial)
+
                 }
-                // Create-mode: Save popup
                 .sheet(isPresented: $showSaveSheet) {
                     NavigationStack {
                         VStack(alignment: .leading, spacing: 16) {
@@ -154,7 +195,23 @@ struct ContentView: View {
                         }
                     }
                 }
+                .onDisappear {
+                    autoHideTask?.cancel()
+                    autoHideTask = nil
+                }
             }
+        }
+    }
+
+    // Auto-hide controls a few seconds after they are shown
+    private func scheduleAutoHideControls() {
+        autoHideTask?.cancel()
+        autoHideTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showControls = false
+            }
+            autoHideTask = nil
         }
     }
 

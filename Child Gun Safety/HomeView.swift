@@ -9,6 +9,9 @@
 import SwiftUI
 
 struct HomeView: View {
+    @State private var cardboardMode = false
+    @StateObject private var cardboardFit = CardboardFit()
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
@@ -19,14 +22,18 @@ struct HomeView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
+                Toggle("Cardboard Viewer Mode", isOn: $cardboardMode)
+                    .toggleStyle(SwitchToggleStyle(tint: .blue))
+                    .padding(.horizontal)
+
                 Menu {
                     NavigationLink {
-                        ContentView(mode: .create)
+                        ContentView(mode: .create, cardboardMode: $cardboardMode)
                     } label: {
                         Label("Create Room (place gun)", systemImage: "plus.circle")
                     }
                     NavigationLink {
-                        ContentView(mode: .load)
+                        ContentView(mode: .load, cardboardMode: $cardboardMode)
                     } label: {
                         Label("Load Room", systemImage: "square.and.arrow.up")
                     }
@@ -50,20 +57,10 @@ struct HomeView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
 
-                NavigationLink {
-                    VoiceCoachView() // the voice-only screen you already have
-                } label: {
-                    Label("Start Voice Coach", systemImage: "mic.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.green.opacity(0.2))
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                }
-
                 Spacer()
             }
             .padding()
         }
+        .environmentObject(cardboardFit)
     }
 }
