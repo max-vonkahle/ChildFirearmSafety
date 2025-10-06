@@ -10,10 +10,22 @@
 import UIKit
 import ARKit
 import SceneKit
+import Metal
+import QuartzCore
 
+@MainActor
 final class StereoARViewController: UIViewController, ARSessionDelegate {
+    private final class MetalHostView: UIView {
+        override class var layerClass: AnyClass { CAMetalLayer.self }
+    }
+
+    private let device: MTLDevice = {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            fatalError("Metal is not supported on this device.")
+        }
+        return device
+    }()
     private let session = ARSession()
-    private let renderer = SCNRenderer(device: MTLCreateSystemDefaultDevice(), options: nil)
     private let scene = SCNScene()
     private let baseCameraNode = SCNNode()
     private let leftEye = SCNNode()
@@ -21,16 +33,36 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var displayLink: CADisplayLink?
     private var config = StereoConfig()
 
+    private lazy var renderer: SCNRenderer = {
+        let renderer = SCNRenderer(device: device, options: nil)
+        renderer.scene = scene
+        return renderer
+    }()
+
+    private lazy var commandQueue: MTLCommandQueue? = device.makeCommandQueue()
+
+    private var metalLayer: CAMetalLayer? {
+        view.layer as? CAMetalLayer
+    }
+
     // public init with custom config if you want
     convenience init(config: StereoConfig) {
         self.init(nibName: nil, bundle: nil)
         self.config = config
     }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
+    override func loadView() {
+        let view = MetalHostView(frame: .zero)
         view.isOpaque = true
         view.backgroundColor = .black
+        (view.layer as? CAMetalLayer)?.device = device
+        (view.layer as? CAMetalLayer)?.pixelFormat = .bgra8Unorm
+        (view.layer as? CAMetalLayer)?.framebufferOnly = true
+        self.view = view
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
 
         // Scene/camera setup
         baseCameraNode.camera = SCNCamera()
@@ -45,20 +77,31 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             $0.camera?.wantsExposureAdaptation = false
         }
 
+        baseCameraNode.addChildNode(leftEye)
+        baseCameraNode.addChildNode(rightEye)
         scene.rootNode.addChildNode(baseCameraNode)
-        renderer.scene = scene
-        renderer.pointOfView = baseCameraNode
 
         // Example content to prove stereo (a simple box 1.5 m ahead)
         let box = SCNNode(geometry: SCNBox(width: 0.2, height: 0.2, length: 0.2, chamferRadius: 0.01))
         box.position = SCNVector3(0, 0, -1.5)
         scene.rootNode.addChildNode(box)
 
+        renderer.pointOfView = baseCameraNode
+
         // ARKit
         session.delegate = self
         let cfg = ARWorldTrackingConfiguration()
         cfg.planeDetection = [.horizontal]
         session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard let metalLayer else { return }
+        let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        metalLayer.frame = view.bounds
+        metalLayer.drawableSize = CGSize(width: view.bounds.width * scale,
+                                         height: view.bounds.height * scale)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -82,20 +125,25 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     }
 
     @objc private func drawFrame() {
-        guard let frame = session.currentFrame else { return }
-        guard let drawable = (view.layer as? CAMetalLayer)?.nextDrawable() else {
-            ensureMetalLayer()
-            return
+        guard let frame = session.currentFrame,
+              let metalLayer,
+              let drawable = metalLayer.nextDrawable(),
+              let commandQueue else { return }
+
+        let orientation = view.window?.windowScene?.interfaceOrientation ?? .landscapeRight
+        let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        let drawableSize = metalLayer.drawableSize == .zero
+            ? CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
+            : metalLayer.drawableSize
+
+        if metalLayer.drawableSize == .zero {
+            metalLayer.drawableSize = drawableSize
         }
 
-        let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
-        let w = view.bounds.width * scale
-        let h = view.bounds.height * scale
-        let halfW = w / 2.0
+        let halfWidth = drawableSize.width * 0.5
 
         // Configure per-eye projections based on the ARCamera intrinsics & half viewport
-        let orientation: UIInterfaceOrientation = .landscapeRight  // lock orientation for viewer
-        let viewportHalf = CGSize(width: halfW, height: h)
+        let viewportHalf = CGSize(width: halfWidth, height: drawableSize.height)
 
         let leftProj  = frame.camera.projectionMatrix(for: orientation,
                                                       viewportSize: viewportHalf,
@@ -108,40 +156,45 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         // Offset eyes in camera (view) space by ±ipd/2 along +X / -X
         let ipd = config.ipdMeters
-        leftEye.simdTransform  = baseCameraNode.simdTransform
-        rightEye.simdTransform = baseCameraNode.simdTransform
-
-        // Apply local translation in camera space
-        leftEye.simdLocalTranslate(by: SIMD3<Float>(-ipd/2, 0, 0))
-        rightEye.simdLocalTranslate(by: SIMD3<Float>( ipd/2, 0, 0))
+        leftEye.simdPosition = SIMD3<Float>(-ipd / 2, 0, 0)
+        rightEye.simdPosition = SIMD3<Float>(ipd / 2, 0, 0)
 
         leftEye.camera?.projectionTransform  = SCNMatrix4(leftProj)
         rightEye.camera?.projectionTransform = SCNMatrix4(rightProj)
 
-        // Prepare Metal render pass that covers whole screen; we’ll render two viewports
-        guard let cmdQueue = renderer.device?.makeCommandQueue(),
-              let cmdBuf = cmdQueue.makeCommandBuffer(),
-              let passDesc = currentPassDescriptor(for: drawable) else { return }
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        let passDesc = currentPassDescriptor(for: drawable)
+
+        let timestamp = CACurrentMediaTime()
 
         // Render LEFT eye into left half viewport
         renderer.pointOfView = leftEye
-        renderer.render(atTime: CACurrentMediaTime(),
-                        viewport: CGRect(x: 0, y: 0, width: Int(halfW), height: Int(h)),
-                        commandBuffer: cmdBuf,
+        renderer.render(atTime: timestamp,
+                        viewport: CGRect(x: 0,
+                                         y: 0,
+                                         width: halfWidth,
+                                         height: drawableSize.height),
+                        commandBuffer: commandBuffer,
                         passDescriptor: passDesc)
+
+        // Ensure the second eye does not clear the buffer the first eye just rendered into
+        passDesc.colorAttachments[0].loadAction = .load
 
         // Render RIGHT eye into right half viewport
         renderer.pointOfView = rightEye
-        renderer.render(atTime: CACurrentMediaTime(),
-                        viewport: CGRect(x: Int(halfW), y: 0, width: Int(halfW), height: Int(h)),
-                        commandBuffer: cmdBuf,
+        renderer.render(atTime: timestamp,
+                        viewport: CGRect(x: halfWidth,
+                                         y: 0,
+                                         width: halfWidth,
+                                         height: drawableSize.height),
+                        commandBuffer: commandBuffer,
                         passDescriptor: passDesc)
 
-        cmdBuf.present(drawable)
-        cmdBuf.commit()
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
     }
 
-    private func currentPassDescriptor(for drawable: CAMetalDrawable) -> MTLRenderPassDescriptor? {
+    private func currentPassDescriptor(for drawable: CAMetalDrawable) -> MTLRenderPassDescriptor {
         let desc = MTLRenderPassDescriptor()
         desc.colorAttachments[0].texture = drawable.texture
         desc.colorAttachments[0].loadAction = .clear
@@ -150,17 +203,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         return desc
     }
 
-    private func ensureMetalLayer() {
-        guard !(view.layer is CAMetalLayer) else { return }
-        let metalLayer = CAMetalLayer()
-        metalLayer.device = renderer.device
-        metalLayer.pixelFormat = .bgra8Unorm
-        metalLayer.framebufferOnly = true
-        metalLayer.frame = view.layer.bounds
-        view.layer.addSublayer(metalLayer)
-        view.layer.setNeedsDisplay()
-    }
-
     // Expose session for external AR content anchoring if needed
     var arSession: ARSession { session }
+
+    func apply(config newConfig: StereoConfig) {
+        config = newConfig
+    }
 }

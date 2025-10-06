@@ -45,17 +45,10 @@ struct ContentView: View {
                 // 2) AR SCENE (Create flow, or Load after a selection)
                 VStack {
                     ZStack {
-                        ARViewContainer(
-                            isArmed: $isArmed,
-                            clearTick: $clearTick,
-                            onDisarm: { isArmed = false }
-                        )
-                        .edgesIgnoringSafeArea(.all)
-                        .scaleEffect(cardboardMode ? 0.98 : 1.0) // slight inset for lens edges
-
                         if cardboardMode {
                             StereoARContainer()                 // true stereo
                                 .ignoresSafeArea()
+                                .scaleEffect(0.98)              // slight inset for lens edges
                             CardboardOverlay()                  // keep your overlay for divider/edge masks
                                 .ignoresSafeArea()
                         } else {

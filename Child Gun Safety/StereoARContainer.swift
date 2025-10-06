@@ -17,6 +17,6 @@ struct StereoARContainer: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: StereoARViewController, context: Context) {
-        // If you want to live-update IPD etc., pass a new config and apply it here.
+        vc.apply(config: config)
     }
 }
