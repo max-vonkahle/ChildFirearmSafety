@@ -5,28 +5,13 @@
 //  Created by Max on 10/5/25.
 //
 
-
-// StereoARViewController.swift
 import UIKit
 import ARKit
 import SceneKit
-import Metal
-import QuartzCore
 import CoreImage
-import ImageIO
 
 @MainActor
 final class StereoARViewController: UIViewController, ARSessionDelegate {
-    private final class MetalHostView: UIView {
-        override class var layerClass: AnyClass { CAMetalLayer.self }
-    }
-
-    private let device: MTLDevice = {
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            fatalError("Metal is not supported on this device.")
-        }
-        return device
-    }()
     private let session = ARSession()
     private let scene = SCNScene()
     private let baseCameraNode = SCNNode()
@@ -35,19 +20,13 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var displayLink: CADisplayLink?
     private var config = StereoConfig()
 
-    private lazy var renderer: SCNRenderer = {
-        let renderer = SCNRenderer(device: device, options: nil)
-        renderer.scene = scene
-        return renderer
-    }()
+    // Passthrough views (behind SCNViews for camera feed)
+    private let leftImageView = UIImageView()
+    private let rightImageView = UIImageView()
 
-    private lazy var commandQueue: MTLCommandQueue? = device.makeCommandQueue()
-    private lazy var ciContext = CIContext(mtlDevice: device)
-    private let colorSpace = CGColorSpaceCreateDeviceRGB()
-
-    private var metalLayer: CAMetalLayer? {
-        view.layer as? CAMetalLayer
-    }
+    // SceneKit views for stereo rendering (transparent, on top of image views)
+    private let leftSCNView = SCNView()
+    private let rightSCNView = SCNView()
 
     // public init with custom config if you want
     convenience init(config: StereoConfig) {
@@ -56,19 +35,32 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     }
 
     override func loadView() {
-        let view = MetalHostView(frame: .zero)
-        view.isOpaque = true
+        view = UIView(frame: .zero)
         view.backgroundColor = .black
-        (view.layer as? CAMetalLayer)?.device = device
-        (view.layer as? CAMetalLayer)?.pixelFormat = .bgra8Unorm
-        (view.layer as? CAMetalLayer)?.framebufferOnly = true
-        self.view = view
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Scene/camera setup
+        // Setup passthrough image views (full half-screen, aspect fill)
+        leftImageView.contentMode = .scaleAspectFill
+        leftImageView.clipsToBounds = true
+        rightImageView.contentMode = .scaleAspectFill
+        rightImageView.clipsToBounds = true
+        view.addSubview(leftImageView)
+        view.addSubview(rightImageView)
+
+        // Setup SCNViews (transparent background, auto-render)
+        leftSCNView.backgroundColor = .clear
+        leftSCNView.rendersContinuously = true  // Ensures smooth rendering
+        leftSCNView.isPlaying = true
+        rightSCNView.backgroundColor = .clear
+        rightSCNView.rendersContinuously = true
+        rightSCNView.isPlaying = true
+        view.addSubview(leftSCNView)
+        view.addSubview(rightSCNView)
+
+        // Scene/camera setup (same as before)
         baseCameraNode.camera = SCNCamera()
         baseCameraNode.camera?.usesOrthographicProjection = false
 
@@ -85,14 +77,18 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         baseCameraNode.addChildNode(rightEye)
         scene.rootNode.addChildNode(baseCameraNode)
 
-        // Example content to prove stereo (a simple box 1.5 m ahead)
+        // Example content to prove stereo (a simple box 1.5 m ahead) - replace with your AR content
         let box = SCNNode(geometry: SCNBox(width: 0.2, height: 0.2, length: 0.2, chamferRadius: 0.01))
         box.position = SCNVector3(0, 0, -1.5)
         scene.rootNode.addChildNode(box)
 
-        renderer.pointOfView = baseCameraNode
+        // Attach scene and POV to SCNViews
+        leftSCNView.scene = scene
+        leftSCNView.pointOfView = leftEye
+        rightSCNView.scene = scene
+        rightSCNView.pointOfView = rightEye
 
-        // ARKit
+        // ARKit setup (same as before)
         session.delegate = self
         let cfg = ARWorldTrackingConfiguration()
         cfg.planeDetection = [.horizontal]
@@ -101,16 +97,16 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard let metalLayer else { return }
-        let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
-        metalLayer.frame = view.bounds
-        metalLayer.drawableSize = CGSize(width: view.bounds.width * scale,
-                                         height: view.bounds.height * scale)
+        let halfWidth = view.bounds.width / 2
+        leftImageView.frame = CGRect(x: 0, y: 0, width: halfWidth, height: view.bounds.height)
+        rightImageView.frame = CGRect(x: halfWidth, y: 0, width: halfWidth, height: view.bounds.height)
+        leftSCNView.frame = leftImageView.frame
+        rightSCNView.frame = rightImageView.frame
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        let link = CADisplayLink(target: self, selector: #selector(drawFrame))
+        let link = CADisplayLink(target: self, selector: #selector(updateFrame))
         link.add(to: .main, forMode: .default)
         displayLink = link
     }
@@ -122,7 +118,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         session.pause()
     }
 
-    // Keep camera aligned to ARKit head pose
+    // Keep camera aligned to ARKit head pose (same as before)
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         autoreleasepool {
             // World transform -> SceneKit (right-handed) uses the same basis with -Z forward
@@ -130,140 +126,81 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         }
     }
 
-    @objc private func drawFrame() {
+    @objc private func updateFrame() {
         autoreleasepool {
-            guard let frame = session.currentFrame,
-                  let metalLayer,
-                  let drawable = metalLayer.nextDrawable(),
-                  let commandQueue else { return }
+            guard let frame = session.currentFrame else { return }
 
             let orientation = view.window?.windowScene?.interfaceOrientation ?? .landscapeRight
-            let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
-            let drawableSize = metalLayer.drawableSize == .zero
-                ? CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
-                : metalLayer.drawableSize
+            let halfWidth = view.bounds.width / 2
+            let viewportHalf = CGSize(width: halfWidth, height: view.bounds.height)
 
-            if metalLayer.drawableSize == .zero {
-                metalLayer.drawableSize = drawableSize
-            }
-
-            let halfWidth = drawableSize.width * 0.5
-
-            // Configure per-eye projections based on the ARCamera intrinsics & half viewport
-            let viewportHalf = CGSize(width: halfWidth, height: drawableSize.height)
-
-            let leftProj  = frame.camera.projectionMatrix(for: orientation,
-                                                          viewportSize: viewportHalf,
-                                                          zNear: CGFloat(config.zNear),
-                                                          zFar:  CGFloat(config.zFar))
+            // Configure per-eye projections based on the ARCamera intrinsics & half viewport (same as before)
+            let leftProj = frame.camera.projectionMatrix(for: orientation,
+                                                         viewportSize: viewportHalf,
+                                                         zNear: CGFloat(config.zNear),
+                                                         zFar: CGFloat(config.zFar))
             let rightProj = frame.camera.projectionMatrix(for: orientation,
                                                           viewportSize: viewportHalf,
                                                           zNear: CGFloat(config.zNear),
-                                                          zFar:  CGFloat(config.zFar))
+                                                          zFar: CGFloat(config.zFar))
 
-            // Offset eyes in camera (view) space by ±ipd/2 along +X / -X
+            // Offset eyes in camera (view) space by ±ipd/2 along +X / -X (same as before)
             let ipd = config.ipdMeters
             leftEye.simdPosition = SIMD3<Float>(-ipd / 2, 0, 0)
             rightEye.simdPosition = SIMD3<Float>(ipd / 2, 0, 0)
 
-            leftEye.camera?.projectionTransform  = SCNMatrix4(leftProj)
+            leftEye.camera?.projectionTransform = SCNMatrix4(leftProj)
             rightEye.camera?.projectionTransform = SCNMatrix4(rightProj)
 
-            guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
-            commandBuffer.label = "StereoARFrame"
-
-            renderCameraBackground(from: frame,
-                                   commandBuffer: commandBuffer,
-                                   drawable: drawable,
-                                   drawableSize: drawableSize,
-                                   orientation: orientation)
-
-            let passDesc = currentPassDescriptor(for: drawable)
-            passDesc.colorAttachments[0].loadAction = .load
-
-            let timestamp = CACurrentMediaTime()
-
-            // Render LEFT eye into left half viewport
-            renderer.pointOfView = leftEye
-            renderer.render(atTime: timestamp,
-                            viewport: CGRect(x: 0,
-                                             y: 0,
-                                             width: halfWidth,
-                                             height: drawableSize.height),
-                            commandBuffer: commandBuffer,
-                            passDescriptor: passDesc)
-
-            // Ensure the second eye does not clear the buffer the first eye just rendered into
-            passDesc.colorAttachments[0].loadAction = .load
-
-            // Render RIGHT eye into right half viewport
-            renderer.pointOfView = rightEye
-            renderer.render(atTime: timestamp,
-                            viewport: CGRect(x: halfWidth,
-                                             y: 0,
-                                             width: halfWidth,
-                                             height: drawableSize.height),
-                            commandBuffer: commandBuffer,
-                            passDescriptor: passDesc)
-
-            commandBuffer.present(drawable)
-            commandBuffer.commit()
+            // Update passthrough images (centered crop matching half aspect, duplicated for both eyes)
+            updateCameraBackground(from: frame, orientation: orientation)
         }
     }
 
-    private func currentPassDescriptor(for drawable: CAMetalDrawable) -> MTLRenderPassDescriptor {
-        let desc = MTLRenderPassDescriptor()
-        desc.colorAttachments[0].texture = drawable.texture
-        desc.colorAttachments[0].loadAction = .clear
-        desc.colorAttachments[0].storeAction = .store
-        desc.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
-        return desc
-    }
+    private func updateCameraBackground(from frame: ARFrame, orientation: UIInterfaceOrientation) {
+        let cgOrientation = exifOrientation(for: orientation)
+        var image = CIImage(cvPixelBuffer: frame.capturedImage).oriented(cgOrientation)
 
-    private func renderCameraBackground(from frame: ARFrame,
-                                        commandBuffer: MTLCommandBuffer,
-                                        drawable: CAMetalDrawable,
-                                        drawableSize: CGSize,
-                                        orientation: UIInterfaceOrientation) {
-        let orientation = exifOrientation(for: orientation)
-        var image = CIImage(cvPixelBuffer: frame.capturedImage).oriented(orientation)
+        let halfWidth = view.bounds.width / 2
+        let viewportHalf = CGSize(width: halfWidth, height: view.bounds.height)
+        let halfAspect = viewportHalf.width / viewportHalf.height
+        let imageExtent = image.extent
+        let imageAspect = imageExtent.width / imageExtent.height
 
-        // Scale and crop to fill the drawable while preserving aspect ratio
-        let scale = max(drawableSize.width / image.extent.width,
-                        drawableSize.height / image.extent.height)
-        image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-
-        let cropRect = CGRect(x: image.extent.midX - drawableSize.width * 0.5,
-                              y: image.extent.midY - drawableSize.height * 0.5,
-                              width: drawableSize.width,
-                              height: drawableSize.height)
+        // Crop to center, matching half aspect (preserves center for both eyes)
+        var cropRect: CGRect
+        if imageAspect > halfAspect {
+            // Crop sides (image wider than half aspect)
+            let cropWidth = imageExtent.height * halfAspect
+            let xOffset = (imageExtent.width - cropWidth) / 2
+            cropRect = CGRect(x: xOffset, y: 0, width: cropWidth, height: imageExtent.height)
+        } else {
+            // Crop top/bottom (image taller)
+            let cropHeight = imageExtent.width / halfAspect
+            let yOffset = (imageExtent.height - cropHeight) / 2
+            cropRect = CGRect(x: 0, y: yOffset, width: imageExtent.width, height: cropHeight)
+        }
         image = image.cropped(to: cropRect)
-        image = image.transformed(by: CGAffineTransform(translationX: -image.extent.origin.x,
-                                                        y: -image.extent.origin.y))
 
-        ciContext.render(image,
-                         to: drawable.texture,
-                         commandBuffer: commandBuffer,
-                         bounds: CGRect(origin: .zero, size: drawableSize),
-                         colorSpace: colorSpace)
+        // Normalize origin and convert to UIImage (shared for both eyes)
+        image = image.transformed(by: CGAffineTransform(translationX: -image.extent.origin.x, y: -image.extent.origin.y))
+        let uiImage = UIImage(ciImage: image)
+
+        leftImageView.image = uiImage
+        rightImageView.image = uiImage
     }
 
     private func exifOrientation(for orientation: UIInterfaceOrientation) -> CGImagePropertyOrientation {
         switch orientation {
-        case .portrait:
-            return .right
-        case .portraitUpsideDown:
-            return .left
-        case .landscapeLeft:
-            return .down
-        case .landscapeRight:
-            return .up
-        default:
-            return .up
+        case .portrait: return .right
+        case .portraitUpsideDown: return .left
+        case .landscapeLeft: return .down
+        case .landscapeRight: return .up
+        default: return .up
         }
     }
 
-    // Expose session for external AR content anchoring if needed
+    // Expose session for external AR content anchoring if needed (same as before)
     var arSession: ARSession { session }
 
     func apply(config newConfig: StereoConfig) {

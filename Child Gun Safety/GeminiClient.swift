@@ -8,13 +8,24 @@
 
 import Foundation
 
-struct GeminiClient {
+@MainActor
+final class GeminiClient: ObservableObject {
     static let shared = GeminiClient()
-    private let apiKey: String = (Bundle.main.object(forInfoDictionaryKey: "GEMINI_API_KEY") as? String) ?? ""
 
-    // Use Flash for speed & free-tier friendliness
+    // Reactive so UI updates when user enters a key
+    @Published var apiKey: String {
+        didSet {
+            UserDefaults.standard.set(apiKey, forKey: "gemini_api_key")
+        }
+    }
+
     private let model = "gemini-2.5-flash"
     private let base = "https://generativelanguage.googleapis.com/v1beta"
+
+    private init() {
+        // Load saved key if it exists
+        self.apiKey = UserDefaults.standard.string(forKey: "gemini_api_key") ?? ""
+    }
 
     struct Part: Codable { let text: String }
     struct Content: Codable { let role: String; let parts: [Part] }
@@ -34,7 +45,9 @@ struct GeminiClient {
 
     /// Simple one-turn chat. Returns the assistant’s text (or throws).
     func chat(userText: String, systemPrompt: String? = nil) async throws -> String {
-        guard !apiKey.isEmpty else { throw NSError(domain: "Gemini", code: 0, userInfo: [NSLocalizedDescriptionKey: "Missing API key"]) }
+        guard !apiKey.isEmpty else {
+            throw NSError(domain: "Gemini", code: 0, userInfo: [NSLocalizedDescriptionKey: "Missing Gemini API key."])
+        }
 
         var comps = URLComponents(string: "\(base)/models/\(model):generateContent")!
         comps.queryItems = [URLQueryItem(name: "key", value: apiKey)]
@@ -42,7 +55,7 @@ struct GeminiClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let sys: Content? = systemPrompt.map { Content(role: "user", parts: [Part(text: $0)]) } // Google calls it systemInstruction; content uses role strings.
+        let sys: Content? = systemPrompt.map { Content(role: "user", parts: [Part(text: $0)]) }
         let body = GenerateContentRequest(
             contents: [Content(role: "user", parts: [Part(text: userText)])],
             systemInstruction: sys,

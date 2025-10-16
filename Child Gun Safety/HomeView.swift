@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct HomeView: View {
-    @State private var cardboardMode = false
+    @AppStorage("cardboardMode") private var cardboardMode = false
     @StateObject private var cardboardFit = CardboardFit()
     
     var body: some View {
@@ -21,10 +21,6 @@ struct HomeView: View {
                 Text("Choose a mode to begin")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-
-                Toggle("Cardboard Viewer Mode", isOn: $cardboardMode)
-                    .toggleStyle(SwitchToggleStyle(tint: .blue))
-                    .padding(.horizontal)
 
                 Menu {
                     NavigationLink {
@@ -60,7 +56,74 @@ struct HomeView: View {
                 Spacer()
             }
             .padding()
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        SettingsView()
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .imageScale(.large)
+                    }
+                    .accessibilityLabel("Settings")
+                }
+            }
         }
         .environmentObject(cardboardFit)
+    }
+}
+
+import SwiftUI
+
+struct SettingsView: View {
+    @State private var apiKey: String = UserDefaults.standard.string(forKey: "gemini_api_key") ?? ""
+    @AppStorage("cardboardMode") private var cardboardMode = false
+    @State private var saved = false
+
+    var body: some View {
+        Form {
+            Section(header: Text("Display")) {
+                Toggle("Cardboard Viewer Mode", isOn: $cardboardMode)
+                    .toggleStyle(SwitchToggleStyle(tint: .blue))
+            }
+
+            Section(header: Text("Gemini API Key")) {
+                SecureField("Enter your Gemini API Key", text: $apiKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                
+                Link("Get a Gemini API Key", destination: URL(string: "https://aistudio.google.com/api-keys")!)
+                    .font(.footnote)
+                    .foregroundColor(.blue)
+                    .padding(.top, 4)
+
+                HStack {
+                    Button("Paste") {
+                        UIPasteboard.general.string.map { apiKey = $0 }
+                    }
+                    Spacer()
+                    Button("Save") {
+                        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                        UserDefaults.standard.set(trimmed, forKey: "gemini_api_key")
+                        saved = true
+                        // Provide a subtle success haptic on save
+                        #if canImport(UIKit)
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        #endif
+                    }
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if saved {
+                    Label("Saved", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.footnote)
+                }
+            }
+
+            Section(footer: Text("Your key is stored locally on this device. You can remove it anytime by clearing the text and tapping Save.")) {
+                EmptyView()
+            }
+        }
+        .navigationTitle("Settings")
+        .onChange(of: apiKey) { _ in saved = false }
     }
 }

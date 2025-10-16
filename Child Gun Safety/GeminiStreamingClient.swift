@@ -26,13 +26,18 @@ final class GeminiStreamingClient {
     struct Candidate: Codable { let content: Content? }
     struct StreamResponse: Codable { let candidates: [Candidate]? }
 
-    private let apiKey: String
     private let model: String
     private let base = "https://generativelanguage.googleapis.com/v1beta"
+    /// Fetch the API key at runtime. Prefers user-entered key in UserDefaults,
+    /// falls back to Info.plist "GEMINI_API_KEY" if not set.
+    private func currentAPIKey() -> String {
+        let userKey = UserDefaults.standard.string(forKey: "gemini_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !userKey.isEmpty { return userKey }
+        let plistKey = (Bundle.main.object(forInfoDictionaryKey: "GEMINI_API_KEY") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return plistKey
+    }
 
-    init(apiKey: String = (Bundle.main.object(forInfoDictionaryKey: "GEMINI_API_KEY") as? String) ?? "",
-         model: String = "gemini-2.5-flash") {
-        self.apiKey = apiKey
+    init(model: String = "gemini-2.5-flash") {
         self.model = model
     }
 
@@ -55,6 +60,7 @@ final class GeminiStreamingClient {
 
         let handle = GeminiStreamHandle()
 
+        let apiKey = currentAPIKey()
         guard !apiKey.isEmpty else {
             handlers.onError?(NSError(domain: "Gemini", code: 0,
                                       userInfo: [NSLocalizedDescriptionKey: "Missing API key"]))
