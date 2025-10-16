@@ -24,17 +24,17 @@ struct HomeView: View {
 
                 Menu {
                     NavigationLink {
-                        ContentView(mode: .create, cardboardMode: $cardboardMode)
+                        SetupView(mode: .create)
                     } label: {
                         Label("Create Room (place gun)", systemImage: "plus.circle")
                     }
                     NavigationLink {
-                        ContentView(mode: .load, cardboardMode: $cardboardMode)
+                        SetupView(mode: .load)
                     } label: {
                         Label("Load Room", systemImage: "square.and.arrow.up")
                     }
                 } label: {
-                    Label("AR Training", systemImage: "arkit")
+                    Label("Setup", systemImage: "arkit")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()
@@ -45,7 +45,7 @@ struct HomeView: View {
                 NavigationLink {
                     OrchestratorView()
                 } label: {
-                    Label("Start Safety Session (Voice + AR)", systemImage: "ear.and.waveform")
+                    Label("Safety Training", systemImage: "ear.and.waveform")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()

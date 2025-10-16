@@ -50,20 +50,6 @@ struct ARViewContainer: UIViewRepresentable {
         context.coordinator.preloadModel(named: "gun")
         context.coordinator.startFrameUpdates()
 
-        // Notifications (Save / Load world map) — roomId in userInfo["roomId"]
-        NotificationCenter.default.addObserver(
-            forName: .saveWorldMap, object: nil, queue: .main
-        ) { [weak coord = context.coordinator] note in
-            guard let roomId = note.userInfo?["roomId"] as? String else { return }
-            coord?.saveWorldMap(roomId: roomId)
-        }
-        NotificationCenter.default.addObserver(
-            forName: .loadWorldMap, object: nil, queue: .main
-        ) { [weak coord = context.coordinator] note in
-            guard let roomId = note.userInfo?["roomId"] as? String else { return }
-            coord?.loadWorldMap(roomId: roomId)
-        }
-
         return arView
     }
 
