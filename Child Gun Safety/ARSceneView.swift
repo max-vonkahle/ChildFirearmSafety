@@ -13,21 +13,26 @@ struct ARSceneView<Overlay: View>: View {
     var onDisarm: () -> Void
     var onSceneAppear: (() -> Void)? = nil
     var onSceneTap: (() -> Void)? = nil
+    var onExit: (() -> Void)? = nil
     @ViewBuilder var overlay: () -> Overlay
 
     @AppStorage("cardboardMode") private var cardboardMode = false
+    @State private var showExitUI = false
+    @State private var exitAutoHideTask: Task<Void, Never>? = nil
 
     init(isArmed: Binding<Bool>,
          clearTick: Binding<Int>,
          onDisarm: @escaping () -> Void,
          onSceneAppear: (() -> Void)? = nil,
          onSceneTap: (() -> Void)? = nil,
+         onExit: (() -> Void)? = nil,
          @ViewBuilder overlay: @escaping () -> Overlay) {
         _isArmed = isArmed
         _clearTick = clearTick
         self.onDisarm = onDisarm
         self.onSceneAppear = onSceneAppear
         self.onSceneTap = onSceneTap
+        self.onExit = onExit
         self.overlay = overlay
     }
 
@@ -48,10 +53,37 @@ struct ARSceneView<Overlay: View>: View {
         }
         .onAppear { onSceneAppear?() }
         .simultaneousGesture(
-            TapGesture().onEnded { onSceneTap?() }
+            TapGesture().onEnded { handleTap() }
         )
         .overlay(alignment: .bottom) {
             overlay()
+        }
+        .safeAreaInset(edge: .top) {
+            Group {
+                if showExitUI, let onExit {
+                    HStack {
+                        Spacer()
+                        Button {
+                            cleanupExitAutoHide()
+                            onExit()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .imageScale(.large)
+                                .padding(12)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        .accessibilityLabel("Exit to Home")
+                        .transition(.opacity.combined(with: .scale))
+                    }
+                    .padding(.top, 8)
+                    .padding(.trailing, 12)
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: showExitUI)
+            .zIndex(1000)
+        }
+        .onDisappear {
+            cleanupExitAutoHide()
         }
     }
 }
@@ -61,13 +93,46 @@ extension ARSceneView where Overlay == EmptyView {
          clearTick: Binding<Int>,
          onDisarm: @escaping () -> Void,
          onSceneAppear: (() -> Void)? = nil,
-         onSceneTap: (() -> Void)? = nil) {
+         onSceneTap: (() -> Void)? = nil,
+         onExit: (() -> Void)? = nil) {
         self.init(isArmed: isArmed,
                   clearTick: clearTick,
                   onDisarm: onDisarm,
                   onSceneAppear: onSceneAppear,
-                  onSceneTap: onSceneTap) {
+                  onSceneTap: onSceneTap,
+                  onExit: onExit) {
             EmptyView()
+        }
+    }
+}
+
+@MainActor
+private extension ARSceneView {
+    func handleTap() {
+        onSceneTap?()
+        guard onExit != nil else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showExitUI = true
+        }
+        scheduleExitAutoHide()
+    }
+
+    func scheduleExitAutoHide() {
+        exitAutoHideTask?.cancel()
+        exitAutoHideTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showExitUI = false
+            }
+            exitAutoHideTask = nil
+        }
+    }
+
+    func cleanupExitAutoHide() {
+        exitAutoHideTask?.cancel()
+        exitAutoHideTask = nil
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showExitUI = false
         }
     }
 }
