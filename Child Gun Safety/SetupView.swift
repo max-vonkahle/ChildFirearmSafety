@@ -24,9 +24,6 @@ struct SetupView: View {
     @State private var selectedRoom: String? = nil
     @State private var didAutoLoad = false
 
-    // Exit UI (revealed on tap)
-    @State private var showExitUI = false
-    @State private var exitAutoHideTask: Task<Void, Never>? = nil
     @Environment(\.dismiss) private var dismiss
 
     // Overlay controls visibility
@@ -51,36 +48,13 @@ struct SetupView: View {
                         clearTick: $clearTick,
                         onDisarm: { isArmed = false },
                         onSceneAppear: handleSceneAppear,
-                        onSceneTap: handleSceneTap
+                        onSceneTap: handleSceneTap,
+                        onExit: performExit
                     ) {
                         if showControls { controlsOverlay }
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        handleSceneTap()
-                    }
                 }
                 .ignoresSafeArea()
-                .safeAreaInset(edge: .top) {
-                    HStack {
-                        Spacer()
-                        if showExitUI {
-                            Button {
-                                performExit()
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .imageScale(.large)
-                                    .padding(12)
-                                    .background(.ultraThinMaterial, in: Circle())
-                            }
-                            .accessibilityLabel("Exit to Home")
-                            .transition(.opacity.combined(with: .scale))
-                        }
-                    }
-                    .padding(.top, 8)
-                    .padding(.trailing, 12)
-                    .zIndex(1000) // ensure above AR overlays
-                }
                 .sheet(isPresented: $showSaveSheet) { saveSheet }
                 .onDisappear {
                     cleanupAutoHide()
@@ -113,7 +87,6 @@ struct SetupView: View {
         withAnimation(.easeInOut(duration: 0.2)) {
             showControls.toggle()
         }
-        showExitUI = showControls
         if showControls {
             scheduleAutoHideControls()
         } else {
@@ -208,7 +181,6 @@ struct SetupView: View {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             withAnimation(.easeInOut(duration: 0.2)) {
                 showControls = false
-                showExitUI = false
             }
             autoHideTask = nil
         }
@@ -217,29 +189,6 @@ struct SetupView: View {
     private func cleanupAutoHide() {
         autoHideTask?.cancel()
         autoHideTask = nil
-    }
-
-    private func revealExitUI() {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            showExitUI = true
-        }
-        scheduleExitAutoHide()
-    }
-
-    private func scheduleExitAutoHide() {
-        exitAutoHideTask?.cancel()
-        exitAutoHideTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showExitUI = false
-            }
-            exitAutoHideTask = nil
-        }
-    }
-
-    private func cleanupExitAutoHide() {
-        exitAutoHideTask?.cancel()
-        exitAutoHideTask = nil
     }
 
     private func performExit() {

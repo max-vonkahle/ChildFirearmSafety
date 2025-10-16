@@ -17,7 +17,6 @@ struct OrchestratorView: View {
     @State private var selectedRoom: String? = nil
     @State private var didAutoLoad = false
     @State private var didAutoStart = false
-    @State private var showExitUI = false
 
     var body: some View {
         Group {
@@ -31,42 +30,17 @@ struct OrchestratorView: View {
                     selectedRoom = name
                 }
             } else {
-                ZStack(alignment: .topTrailing) {
-                    ARSceneView(
-                        isArmed: $isArmed,
-                        clearTick: $clearTick,
-                        onDisarm: { isArmed = false },
-                        onSceneAppear: handleSceneAppear
-                    ) {
-                        EmptyView() // No user-facing overlay
+                ARSceneView(
+                    isArmed: $isArmed,
+                    clearTick: $clearTick,
+                    onDisarm: { isArmed = false },
+                    onSceneAppear: handleSceneAppear,
+                    onExit: {
+                        stopSession()
+                        dismiss()
                     }
-                    .contentShape(Rectangle()) // Make the whole view tappable to reveal controls
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showExitUI = true
-                        }
-                        // Auto-hide after a short delay
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showExitUI = false
-                            }
-                        }
-                    }
-                    if showExitUI {
-                        Button {
-                            stopSession()
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .imageScale(.large)
-                                .padding(12)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-                        .accessibilityLabel("Exit to Home")
-                        .padding(.top, 12)
-                        .padding(.trailing, 12)
-                        .transition(.opacity.combined(with: .scale))
-                    }
+                ) {
+                    EmptyView() // No user-facing overlay
                 }
                 .onDisappear { stopSession() }
                 // HIDE NAV BAR only while in AR scene
