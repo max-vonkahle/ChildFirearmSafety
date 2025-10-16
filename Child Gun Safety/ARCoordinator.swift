@@ -69,12 +69,28 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         self.arView = arView
         self.onDisarm = onDisarm
 
-        // Listen for save/load triggers
-        NotificationCenter.default.addObserver(forName: .saveWorldMap, object: nil, queue: .main) { [weak self] _ in
-            self?.saveWorldMap(roomId: "default")
+        // Listen for save/load triggers (roomId provided by SwiftUI views when available)
+        NotificationCenter.default.addObserver(forName: .saveWorldMap, object: nil, queue: .main) { [weak self] note in
+            guard let self else { return }
+            let roomId = (note.userInfo?["roomId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let effectiveId: String
+            if let roomId, !roomId.isEmpty {
+                effectiveId = roomId
+            } else {
+                effectiveId = "default"
+            }
+            self.saveWorldMap(roomId: effectiveId)
         }
-        NotificationCenter.default.addObserver(forName: .loadWorldMap, object: nil, queue: .main) { [weak self] _ in
-            self?.loadWorldMap(roomId: "default")
+        NotificationCenter.default.addObserver(forName: .loadWorldMap, object: nil, queue: .main) { [weak self] note in
+            guard let self else { return }
+            let roomId = (note.userInfo?["roomId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let effectiveId: String
+            if let roomId, !roomId.isEmpty {
+                effectiveId = roomId
+            } else {
+                effectiveId = "default"
+            }
+            self.loadWorldMap(roomId: effectiveId)
         }
         // Listen for AR commands (e.g., hide gun)
         NotificationCenter.default.addObserver(forName: .arCommand, object: nil, queue: .main) { [weak self] note in
