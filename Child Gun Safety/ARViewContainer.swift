@@ -43,6 +43,7 @@ struct ARViewContainer: UIViewRepresentable {
         // Tap gesture forwarding to coordinator
         let tap = UITapGestureRecognizer(target: context.coordinator,
                                          action: #selector(ARCoordinator.handleTap(_:)))
+        tap.cancelsTouchesInView = false  // Add this line to allow touches to propagate
         arView.addGestureRecognizer(tap)
 
         // Bind coordinator to ARView and preload model

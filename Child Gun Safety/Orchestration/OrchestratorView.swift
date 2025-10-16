@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct OrchestratorView: View {
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var orch = Orchestrator()
     @StateObject private var coach = VoiceCoach()
 
@@ -16,10 +17,12 @@ struct OrchestratorView: View {
     @State private var selectedRoom: String? = nil
     @State private var didAutoLoad = false
     @State private var didAutoStart = false
+    @State private var showExitUI = false
 
     var body: some View {
         Group {
             if selectedRoom == nil {
+                // SHOW NAV BAR (so Back appears)
                 RoomPickerView(
                     title: "Choose a Room",
                     emptyMessage: "Create a room first, then save it to see it here.",
@@ -28,19 +31,49 @@ struct OrchestratorView: View {
                     selectedRoom = name
                 }
             } else {
-                ARSceneView(
-                    isArmed: $isArmed,
-                    clearTick: $clearTick,
-                    onDisarm: { isArmed = false },
-                    onSceneAppear: handleSceneAppear
-                ) {
-                    safetyOverlay
+                ZStack(alignment: .topTrailing) {
+                    ARSceneView(
+                        isArmed: $isArmed,
+                        clearTick: $clearTick,
+                        onDisarm: { isArmed = false },
+                        onSceneAppear: handleSceneAppear
+                    ) {
+                        EmptyView() // No user-facing overlay
+                    }
+                    .contentShape(Rectangle()) // Make the whole view tappable to reveal controls
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showExitUI = true
+                        }
+                        // Auto-hide after a short delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showExitUI = false
+                            }
+                        }
+                    }
+                    if showExitUI {
+                        Button {
+                            stopSession()
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .imageScale(.large)
+                                .padding(12)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        .accessibilityLabel("Exit to Home")
+                        .padding(.top, 12)
+                        .padding(.trailing, 12)
+                        .transition(.opacity.combined(with: .scale))
+                    }
                 }
                 .onDisappear { stopSession() }
+                // HIDE NAV BAR only while in AR scene
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationBarBackButtonHidden(true)
             }
         }
-        .navigationTitle("Safety Training")
-        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func handleSceneAppear() {
@@ -70,26 +103,6 @@ struct OrchestratorView: View {
     private func stopSession() {
         orch.stopSession()
         coach.stopSession()
-    }
-
-    @ViewBuilder
-    private var safetyOverlay: some View {
-        HStack(spacing: 16) {
-            Button("Change Room") { changeRoom() }
-            Button("Stop") { stopSession() }
-            Spacer()
-            Text(phaseLabel(orch.phase))
-                .font(.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: Capsule())
-        }
-        .padding()
-        .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal)
-        .padding(.bottom, 16)
     }
 
     private func phaseLabel(_ p: SessionPhase) -> String {

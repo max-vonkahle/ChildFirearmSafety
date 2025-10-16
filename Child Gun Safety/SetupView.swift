@@ -24,6 +24,11 @@ struct SetupView: View {
     @State private var selectedRoom: String? = nil
     @State private var didAutoLoad = false
 
+    // Exit UI (revealed on tap)
+    @State private var showExitUI = false
+    @State private var exitAutoHideTask: Task<Void, Never>? = nil
+    @Environment(\.dismiss) private var dismiss
+
     // Overlay controls visibility
     @State private var showControls = false
     @State private var autoHideTask: Task<Void, Never>? = nil
@@ -31,6 +36,7 @@ struct SetupView: View {
     var body: some View {
         Group {
             if mode == .load && selectedRoom == nil {
+                // SHOW NAV BAR on picker so the Back button appears
                 RoomPickerView(
                     title: "Load Room",
                     rooms: RoomLibrary.savedRooms()
@@ -39,21 +45,50 @@ struct SetupView: View {
                     didAutoLoad = false
                 }
             } else {
-                ARSceneView(
-                    isArmed: $isArmed,
-                    clearTick: $clearTick,
-                    onDisarm: { isArmed = false },
-                    onSceneAppear: handleSceneAppear,
-                    onSceneTap: handleSceneTap
-                ) {
-                    if showControls { controlsOverlay }
+                ZStack {
+                    ARSceneView(
+                        isArmed: $isArmed,
+                        clearTick: $clearTick,
+                        onDisarm: { isArmed = false },
+                        onSceneAppear: handleSceneAppear,
+                        onSceneTap: handleSceneTap
+                    ) {
+                        if showControls { controlsOverlay }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        handleSceneTap()
+                    }
+                }
+                .ignoresSafeArea()
+                .safeAreaInset(edge: .top) {
+                    HStack {
+                        Spacer()
+                        if showExitUI {
+                            Button {
+                                performExit()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .imageScale(.large)
+                                    .padding(12)
+                                    .background(.ultraThinMaterial, in: Circle())
+                            }
+                            .accessibilityLabel("Exit to Home")
+                            .transition(.opacity.combined(with: .scale))
+                        }
+                    }
+                    .padding(.top, 8)
+                    .padding(.trailing, 12)
+                    .zIndex(1000) // ensure above AR overlays
                 }
                 .sheet(isPresented: $showSaveSheet) { saveSheet }
-                .onDisappear { cleanupAutoHide() }
+                .onDisappear {
+                    cleanupAutoHide()
+                }
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationBarBackButtonHidden(true)
             }
         }
-        .navigationTitle(navigationTitle)
-        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var navigationTitle: String {
@@ -78,6 +113,7 @@ struct SetupView: View {
         withAnimation(.easeInOut(duration: 0.2)) {
             showControls.toggle()
         }
+        showExitUI = showControls
         if showControls {
             scheduleAutoHideControls()
         } else {
@@ -88,8 +124,8 @@ struct SetupView: View {
     // MARK: - Overlays
     @ViewBuilder
     private var controlsOverlay: some View {
-        HStack(spacing: 12) {
-            if mode == .create {
+        if mode == .create {
+            HStack(spacing: 12) {
                 Button {
                     clearTick &+= 1
                 } label: {
@@ -117,37 +153,16 @@ struct SetupView: View {
                         .background(.ultraThinMaterial)
                         .cornerRadius(12)
                 }
-            } else if let name = selectedRoom {
-                Button {
-                    NotificationCenter.default.post(
-                        name: .loadWorldMap,
-                        object: nil,
-                        userInfo: ["roomId": name]
-                    )
-                } label: {
-                    Label("Reload \(name)", systemImage: "arrow.clockwise")
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(12)
-                }
-
-                Button {
-                    selectedRoom = nil
-                    didAutoLoad = false
-                } label: {
-                    Label("Change Room", systemImage: "list.bullet")
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(12)
-                }
             }
+            .padding()
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .padding(.bottom, 16)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .animation(.easeInOut(duration: 0.2), value: showControls)
+        } else {
+            EmptyView()
         }
-        .padding()
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .padding(.bottom, 16)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-        .animation(.easeInOut(duration: 0.2), value: showControls)
     }
 
     // MARK: - Save Sheet
@@ -193,6 +208,7 @@ struct SetupView: View {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             withAnimation(.easeInOut(duration: 0.2)) {
                 showControls = false
+                showExitUI = false
             }
             autoHideTask = nil
         }
@@ -201,5 +217,32 @@ struct SetupView: View {
     private func cleanupAutoHide() {
         autoHideTask?.cancel()
         autoHideTask = nil
+    }
+
+    private func revealExitUI() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showExitUI = true
+        }
+        scheduleExitAutoHide()
+    }
+
+    private func scheduleExitAutoHide() {
+        exitAutoHideTask?.cancel()
+        exitAutoHideTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showExitUI = false
+            }
+            exitAutoHideTask = nil
+        }
+    }
+
+    private func cleanupExitAutoHide() {
+        exitAutoHideTask?.cancel()
+        exitAutoHideTask = nil
+    }
+
+    private func performExit() {
+        dismiss()
     }
 }
