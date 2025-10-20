@@ -7,6 +7,7 @@
 
 
 import SwiftUI
+import FirebaseCore
 
 @main
 struct ChildGunSafetyApp: App {
@@ -14,6 +15,12 @@ struct ChildGunSafetyApp: App {
 
     // Scene phase lets us pause/resume audio cleanly
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        if FirebaseApp.app() == nil {
+            FirebaseApp.configure()
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
