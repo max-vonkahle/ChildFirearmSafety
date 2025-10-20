@@ -26,7 +26,7 @@ struct HomeView: View {
                     NavigationLink {
                         SetupView(mode: .create)
                     } label: {
-                        Label("Create Room (place gun)", systemImage: "plus.circle")
+                        Label("Create Room", systemImage: "plus.circle")
                     }
                     NavigationLink {
                         SetupView(mode: .load)
@@ -124,6 +124,8 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .onChange(of: apiKey) { _ in saved = false }
+        .onChange(of: apiKey) { _, _ in
+            saved = false
+        }
     }
 }

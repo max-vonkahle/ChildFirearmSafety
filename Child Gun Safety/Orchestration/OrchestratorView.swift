@@ -17,6 +17,7 @@ struct OrchestratorView: View {
     @State private var selectedRoom: String? = nil
     @State private var didAutoLoad = false
     @State private var didAutoStart = false
+    @State private var roomNames: [String] = RoomLibrary.savedRooms()
 
     var body: some View {
         Group {
@@ -25,10 +26,16 @@ struct OrchestratorView: View {
                 RoomPickerView(
                     title: "Choose a Room",
                     emptyMessage: "Create a room first, then save it to see it here.",
-                    rooms: RoomLibrary.savedRooms()
-                ) { name in
-                    selectedRoom = name
-                }
+                    rooms: roomNames,
+                    onPick: { name in
+                        selectedRoom = name
+                    },
+                    onDelete: { name in
+                        RoomLibrary.delete(name)
+                        roomNames = RoomLibrary.savedRooms()
+                    }
+                )
+                .onAppear { roomNames = RoomLibrary.savedRooms() }
             } else {
                 ARSceneView(
                     isArmed: $isArmed,

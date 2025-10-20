@@ -48,7 +48,8 @@ final class ASRController {
 
     // MARK: - Debug
     var debug = true
-    private func log(_ s: String) { if debug { print("[ASR]", s) } }
+//    private func log(_ s: String) { if debug { print("[ASR]", s) } }
+    private func log(_ s: String) { /* no-op */ }
 
     // MARK: - Public control
     func setWantsRunning(_ want: Bool) {

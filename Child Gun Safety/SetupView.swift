@@ -23,6 +23,7 @@ struct SetupView: View {
     // Load mode state
     @State private var selectedRoom: String? = nil
     @State private var didAutoLoad = false
+    @State private var roomNames: [String] = RoomLibrary.savedRooms()
 
     @Environment(\.dismiss) private var dismiss
 
@@ -36,11 +37,17 @@ struct SetupView: View {
                 // SHOW NAV BAR on picker so the Back button appears
                 RoomPickerView(
                     title: "Load Room",
-                    rooms: RoomLibrary.savedRooms()
-                ) { name in
-                    selectedRoom = name
-                    didAutoLoad = false
-                }
+                    rooms: roomNames,
+                    onPick: { name in
+                        selectedRoom = name
+                        didAutoLoad = false
+                    },
+                    onDelete: { name in
+                        RoomLibrary.delete(name)
+                        roomNames = RoomLibrary.savedRooms()
+                    }
+                )
+                .onAppear { roomNames = RoomLibrary.savedRooms() }
             } else {
                 ZStack {
                     ARSceneView(
@@ -61,6 +68,11 @@ struct SetupView: View {
                 }
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationBarBackButtonHidden(true)
+            }
+        }
+        .onChange(of: showSaveSheet) { _, isShowing in
+            if !isShowing {
+                roomNames = RoomLibrary.savedRooms()
             }
         }
     }

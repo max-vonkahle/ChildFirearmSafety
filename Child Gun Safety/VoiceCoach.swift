@@ -21,13 +21,19 @@ final class VoiceCoach: ObservableObject {
     @Published var transcript: String = ""   // for UI
 
     private let asr = ASRController()
-    private let tts = TTSController()
+    private let tts = GeminiTTSController()
     private let llm = GeminiStreamingClient()
 
     // Build SpeechDirector lazily to avoid init-order issues.
     private lazy var director: SpeechDirector = {
         let d = SpeechDirector(
-            speak: { [weak self] text in self?.tts.speak(text) },
+            speak: { [weak self] text in
+                Task { @MainActor in
+                    guard let self else { return }
+                    // Non-interrupting speak so the SpeechDirector controls sequencing
+                    try? await self.tts.speak(text, interrupt: false)
+                }
+            },
             stopTTS: { [weak self] in self?.tts.stop() },
             pauseASR: { [weak self] in
                 guard let self else { return }
@@ -41,8 +47,18 @@ final class VoiceCoach: ObservableObject {
             }
         )
         // Wire TTS lifecycle (capture d, not self.director)
-        tts.onStart  = { [weak d] in Task { @MainActor in d?.notifyTTSStart() } }
-        tts.onFinish = { [weak d] in Task { @MainActor in d?.notifyTTSFinish() } }
+        tts.onStart  = { [weak d] in
+            Task { @MainActor in
+                print("[TTS] onStart")
+                d?.notifyTTSStart()
+            }
+        }
+        tts.onFinish = { [weak d] in
+            Task { @MainActor in
+                print("[TTS] onFinish")
+                d?.notifyTTSFinish()
+            }
+        }
         return d
     }()
 
@@ -66,12 +82,6 @@ final class VoiceCoach: ObservableObject {
     - Do not ask about body positioning or hands unless the child explicitly asks; focus only on the three rules.
     - No lists in outputs; no emojis; no role‑play beyond being a calm coach.
 
-    Examples of *good* coach moves:
-    - “What’s the safest first step here?”
-    - “Where could you stand so you’re farther away?”
-    - “Who’s a trusted adult you could tell right now?”
-    - “If it might be unsafe, what’s the next smart move?”
-
     Your objective is to help the child independently state: don’t touch it, move away, and tell a trusted adult. Stay concise and question‑forward at all times.
     """
 
@@ -79,10 +89,9 @@ final class VoiceCoach: ObservableObject {
     private var llmActive = false
 
     // Conversation orchestration
-    private enum Phase { case notStarted, waitingForHello, storySaid_waitingForGun, gunInView_waiting, done }
+    private enum Phase { case notStarted, introPlaying, storySaid_waitingForGun, gunInView_waiting, done }
     private var phase: Phase = .notStarted
     private var gunWaitTimer: Timer?
-    private var helloWaitTimer: Timer?
 
     init() {
         // ASR callbacks may fire off-main; hop to main
@@ -94,15 +103,7 @@ final class VoiceCoach: ObservableObject {
         asr.onFinal = { [weak self] text in
             Task { @MainActor in
                 guard let self else { return }
-                self.cancelHelloWait()
-                print("[VC] onFinal -> \(text)")
-                // If we were waiting for hello, move to story after any greeting.
-                if self.phase == .waitingForHello {
-                    self.phase = .storySaid_waitingForGun
-                    self.cancelGunWait()
-                    self.streamCoach(observation: "Briefly introduce the scenario: a friend lost their notebook. Invite the child to look around the room to see if they can find it. Ask one short guiding question.")
-                    return
-                }
+                print("[ASR] final -> \(text)")
                 // Any speech cancels a pending gun wait prompt.
                 self.cancelGunWait()
                 self.handleUserUtterance(text)
@@ -110,7 +111,6 @@ final class VoiceCoach: ObservableObject {
         }
         asr.onSpeechStart = { [weak self] in
             Task { @MainActor in
-                self?.cancelHelloWait()
                 self?.cancelGunWait()
                 if self?.state == .speaking { self?.bargeIn() }
             }
@@ -150,8 +150,7 @@ final class VoiceCoach: ObservableObject {
                 try asr.start()
                 state = .listening
                 if self.phase == .notStarted {
-                    self.phase = .waitingForHello
-                    self.startHelloWait(seconds: 4.0)
+                    self.scriptedIntro()
                 }
             } catch {
                 transcript.append("\n[ASR error] \(error.localizedDescription)")
@@ -171,6 +170,8 @@ final class VoiceCoach: ObservableObject {
     private func streamCoach(observation: String) {
         state = .thinking
         let userText = "Observation: \(observation)\nRespond with one short guiding question."
+        print("[VC] → LLM (observation): \(userText)")
+        var _dbg = ""
         streamHandle = llm.stream(
             userText: userText,
             systemPrompt: systemPrompt,
@@ -181,30 +182,47 @@ final class VoiceCoach: ObservableObject {
                         guard let self = self else { return }
                         self.llmActive = true
                         self.append("\nCoach: ")
+                        _dbg = ""
                     }
                 },
-                onToken: { [weak self] chunk in Task { @MainActor in self?.append(chunk) } },
-                onSentence: { [weak self] sentence in Task { @MainActor in self?.director.enqueue(sentence) } },
-                onDone: { [weak self] in Task { @MainActor in
-                    guard let self = self else { return }
-                    self.llmActive = false
-                    if self.director.isSpeaking == false {
+                onToken: { [weak self] chunk in
+                    Task { @MainActor in
+                        _dbg += chunk
+                        self?.append(chunk)
+                    }
+                },
+                onSentence: { [weak self] sentence in
+                    Task { @MainActor in
+                        print("[LLM] sentence -> \(sentence)")
+                        self?.director.enqueue(sentence)
+                    }
+                },
+                onDone: { [weak self] in
+                    Task { @MainActor in
+                        print("[LLM] final -> \(_dbg)")
+                        guard let self = self else { return }
+                        self.llmActive = false
+                        if self.director.isSpeaking == false {
+                            self.state = .listening
+                            VoicePerms.setModeListening()
+                            self.asr.setWantsRunning(true)
+                            try? self.asr.start()
+                        }
+                    }
+                },
+                onError: { [weak self] err in
+                    Task { @MainActor in
+                        print("[LLM] error (partial) -> \(_dbg)")
+                        guard let self = self else { return }
+                        self.llmActive = false
+                        self.append("\n[error] \(err.localizedDescription)")
+                        self.director.clearAll()
                         self.state = .listening
                         VoicePerms.setModeListening()
                         self.asr.setWantsRunning(true)
                         try? self.asr.start()
                     }
-                }},
-                onError: { [weak self] err in Task { @MainActor in
-                    guard let self = self else { return }
-                    self.llmActive = false
-                    self.append("\n[error] \(err.localizedDescription)")
-                    self.director.clearAll()
-                    self.state = .listening
-                    VoicePerms.setModeListening()
-                    self.asr.setWantsRunning(true)
-                    try? self.asr.start()
-                }}
+                }
             )
         )
     }
@@ -235,21 +253,35 @@ final class VoiceCoach: ObservableObject {
         gunWaitTimer = nil
     }
     
-    private func startHelloWait(seconds: TimeInterval = 4.0) {
-        cancelHelloWait()
-        helloWaitTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                guard let self = self else { return }
-                if self.phase == .waitingForHello {
-                    self.streamCoach(observation: "Start the session with a friendly, brief hello and a single welcoming question.")
-                }
-            }
-        }
-    }
 
-    private func cancelHelloWait() {
-        helloWaitTimer?.invalidate()
-        helloWaitTimer = nil
+    /// Play a short, scripted intro via TTS, then hand off to LLM-driven flow.
+    private func scriptedIntro() {
+        Task { @MainActor in
+            interruptLLMAndTTS()
+            phase = .introPlaying
+            print("[VC] scriptedIntro: begin")
+            // Pause ASR so TTS can play cleanly
+            asr.setWantsRunning(false)
+            asr.stop()
+            // Keep this concise and neutral; do not teach handling, only frame the activity.
+            let intro = "Hi there. Let’s do a quick safety practice. Your friend needs help looking for their phone. Take a look around the room."
+            do {
+                print("[VC] scriptedIntro: speaking -> \(intro)")
+                try await tts.speak(intro, interrupt: true)
+                print("[VC] scriptedIntro: speak completed")
+            } catch {
+                // If TTS fails, fall back to transcript only
+                append("\nCoach: \(intro)")
+            }
+            // After the scripted intro, begin waiting for the scene to unfold.
+            phase = .storySaid_waitingForGun
+            startGunWait(seconds: 10)
+            // Resume listening so the child can respond immediately.
+            state = .listening
+            VoicePerms.setModeListening()
+            asr.setWantsRunning(true)
+            try? asr.start()
+        }
     }
 
     /// Very small, rule-based intent router. Returns a VCIntent if matched and also posts it to NotificationCenter.
@@ -351,6 +383,8 @@ final class VoiceCoach: ObservableObject {
         // Always continue with LLM for user utterances.
 
         // Otherwise, continue with LLM streaming for general questions
+        print("[VC] → LLM (user): \(text)")
+        var _dbg = ""
         streamHandle = llm.stream(
             userText: text,
             systemPrompt: systemPrompt,
@@ -361,19 +395,24 @@ final class VoiceCoach: ObservableObject {
                         guard let self = self else { return }
                         self.llmActive = true
                         self.append("\nCoach: ")
+                        _dbg = ""
                     }
                 },
                 onToken: { [weak self] chunk in
-                    Task { @MainActor in self?.append(chunk) }
+                    Task { @MainActor in
+                        _dbg += chunk
+                        self?.append(chunk)
+                    }
                 },
                 onSentence: { [weak self] sentence in
                     Task { @MainActor in
-                        guard let self = self else { return }
-                        self.director.enqueue(sentence)
+                        print("[LLM] sentence -> \(sentence)")
+                        self?.director.enqueue(sentence)
                     }
                 },
                 onDone: { [weak self] in
                     Task { @MainActor in
+                        print("[LLM] final -> \(_dbg)")
                         guard let self = self else { return }
                         self.llmActive = false
                         if self.director.isSpeaking == false {
@@ -386,6 +425,7 @@ final class VoiceCoach: ObservableObject {
                 },
                 onError: { [weak self] err in
                     Task { @MainActor in
+                        print("[LLM] error (partial) -> \(_dbg)")
                         guard let self = self else { return }
                         self.llmActive = false
                         self.append("\n[error] \(err.localizedDescription)")
@@ -426,9 +466,10 @@ final class VoiceCoach: ObservableObject {
 
         // Compose an event-to-user text. The systemPrompt enforces Socratic style.
         let userText = "Observation: \(observation)\nRespond with one short guiding question."
-
+        print("[VC] → LLM (event): \(userText)")
         // Move to thinking state and stream
         state = .thinking
+        var _dbg = ""
         streamHandle = llm.stream(
             userText: userText,
             systemPrompt: systemPrompt,
@@ -439,19 +480,24 @@ final class VoiceCoach: ObservableObject {
                         guard let self = self else { return }
                         self.llmActive = true
                         self.append("\nCoach: ")
+                        _dbg = ""
                     }
                 },
                 onToken: { [weak self] chunk in
-                    Task { @MainActor in self?.append(chunk) }
+                    Task { @MainActor in
+                        _dbg += chunk
+                        self?.append(chunk)
+                    }
                 },
                 onSentence: { [weak self] sentence in
                     Task { @MainActor in
-                        guard let self = self else { return }
-                        self.director.enqueue(sentence)
+                        print("[LLM] sentence -> \(sentence)")
+                        self?.director.enqueue(sentence)
                     }
                 },
                 onDone: { [weak self] in
                     Task { @MainActor in
+                        print("[LLM] final -> \(_dbg)")
                         guard let self = self else { return }
                         self.llmActive = false
                         if self.director.isSpeaking == false {
@@ -464,6 +510,7 @@ final class VoiceCoach: ObservableObject {
                 },
                 onError: { [weak self] err in
                     Task { @MainActor in
+                        print("[LLM] error (partial) -> \(_dbg)")
                         guard let self = self else { return }
                         self.llmActive = false
                         self.append("\n[error] \(err.localizedDescription)")
@@ -502,27 +549,49 @@ final class VoiceCoach: ObservableObject {
     func handleTestPrompt(_ text: String) {
         transcript.append("\n\nYou: \(text)")
         state = .thinking
+        var _dbg = ""
         streamHandle = llm.stream(
             userText: text,
             systemPrompt: systemPrompt,
             temperature: 0.2,
             handlers: .init(
-                onOpen: { [weak self] in Task { @MainActor in self?.transcript.append("\nCoach: ") } },
-                onToken: { [weak self] chunk in Task { @MainActor in self?.transcript.append(chunk) } },
-                onSentence: { [weak self] sentence in Task { @MainActor in self?.director.enqueue(sentence) } },
-                onDone: { [weak self] in Task { @MainActor in
-                    guard let self = self else { return }
-                    if self.director.isSpeaking == false {
-                        try? self.asr.start()
-                        self.state = .listening
+                onOpen: { [weak self] in
+                    Task { @MainActor in
+                        self?.transcript.append("\nCoach: ")
+                        _dbg = ""
                     }
-                }},
-                onError: { [weak self] err in Task { @MainActor in
-                    self?.transcript.append("\n[LLM error] \(err.localizedDescription)")
-                    self?.director.clearAll()
-                    try? self?.asr.start()
-                    self?.state = .listening
-                }}
+                },
+                onToken: { [weak self] chunk in
+                    Task { @MainActor in
+                        _dbg += chunk
+                        self?.transcript.append(chunk)
+                    }
+                },
+                onSentence: { [weak self] sentence in
+                    Task { @MainActor in
+                        print("[LLM] sentence -> \(sentence)")
+                        self?.director.enqueue(sentence)
+                    }
+                },
+                onDone: { [weak self] in
+                    Task { @MainActor in
+                        print("[LLM] final -> \(_dbg)")
+                        guard let self = self else { return }
+                        if self.director.isSpeaking == false {
+                            try? self.asr.start()
+                            self.state = .listening
+                        }
+                    }
+                },
+                onError: { [weak self] err in
+                    Task { @MainActor in
+                        print("[LLM] error (partial) -> \(_dbg)")
+                        self?.transcript.append("\n[LLM error] \(err.localizedDescription)")
+                        self?.director.clearAll()
+                        try? self?.asr.start()
+                        self?.state = .listening
+                    }
+                }
             )
         )
     }

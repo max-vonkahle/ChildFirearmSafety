@@ -28,7 +28,9 @@ final class Orchestrator: ObservableObject {
         ) { [weak self] note in
             guard let self,
                   let e = note.userInfo?[BusKey.arevent] as? AREvent else { return }
-            self.handleAREvent(e)
+            Task { @MainActor in
+                self.handleAREvent(e)
+            }
         }
 
         NotificationCenter.default.addObserver(
@@ -36,7 +38,9 @@ final class Orchestrator: ObservableObject {
         ) { [weak self] note in
             guard let self,
                   let i = note.userInfo?[BusKey.vcintent] as? VCIntent else { return }
-            self.handleVCIntent(i)
+            Task { @MainActor in
+                self.handleVCIntent(i)
+            }
         }
     }
 
@@ -59,7 +63,7 @@ final class Orchestrator: ObservableObject {
     // MARK: - Event handlers
     func handleAREvent(_ e: AREvent) {
         switch (phase, e) {
-        case (.exploration, .gunProximityNear(let d)):
+        case (.exploration, .gunProximityNear(_)):
             lastNearTime = Date()
             phase = .encounterPending
 
