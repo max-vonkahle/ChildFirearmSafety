@@ -57,11 +57,24 @@ final class GeminiTTSController {
     private lazy var aiService: FirebaseAI = {
         return FirebaseAI.firebaseAI(backend: .googleAI())  // Or .vertexAI(location: "us-central1") for production
     }()
-    
-    // Create the generative model (reuse this instance)
-    private lazy var model: GenerativeModel = {
-        return aiService.generativeModel(modelName: modelName)
-    }()
+
+    private func makeModel() -> GenerativeModel {
+        let generationConfig = GenerationConfig(
+            responseMIMEType: "audio/pcm;rate=24000"
+        )
+
+        let requestOptions = RequestOptions(timeout: requestTimeout)
+
+        let instructionText = "You are a text-to-speech synthesizer. Speak using the \(voiceName) voice. Only return audio for the provided text."
+        let systemInstruction = ModelContent(role: "system", parts: [TextPart(instructionText)])
+
+        return aiService.generativeModel(
+            modelName: modelName,
+            generationConfig: generationConfig,
+            systemInstruction: systemInstruction,
+            requestOptions: requestOptions
+        )
+    }
 
     /// Enqueue a sentence for sequential playback (used for streaming LLM output).
     func enqueue(_ text: String) {
@@ -126,35 +139,16 @@ final class GeminiTTSController {
 
         do {
             // Prepare content and config for TTS
-            let content = Content(parts: [.text(text)])
-            
-            let speechConfig = SpeechConfig(
-                voiceConfig: VoiceConfig(
-                    prebuiltVoiceConfig: PrebuiltVoiceConfig(voiceName: voiceName)
-                )
-            )
-            
-            let generationConfig = GenerationConfig(
-                responseModalities: [.audio],
-                speechConfig: speechConfig
-            )
-            
-            // Optional: Set timeout (SDK uses URLSession under the hood)
-            var requestOptions = RequestOptions()
-            requestOptions.timeout = requestTimeout
-            
+            let content = ModelContent(parts: [TextPart(text)])
+
             // Call generateContent for audio response
-            let response = try await model.generateContent(
-                [content],
-                generationConfig: generationConfig,
-                requestOptions: requestOptions
-            )
-            
-            guard let audioPart = response.candidates?.first?.content.parts.first,
-                  let b64 = audioPart.inlineData?.data,
-                  let pcm = Data(base64Encoded: b64) else {
+            let response = try await makeModel().generateContent([content])
+
+            guard let audioPart = response.inlineDataParts.first else {
                 throw NSError(domain: "GeminiTTS", code: 2, userInfo: [NSLocalizedDescriptionKey: "No audio returned"])
             }
+
+            let pcm = audioPart.data
 
             print("[TTS] received PCM bytes: \(pcm.count)")
             // PCM is 24_000 Hz, mono, 16-bit little-endian (per docs).
