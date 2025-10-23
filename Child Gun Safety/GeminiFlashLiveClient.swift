@@ -62,26 +62,31 @@ final class GeminiFlashLiveClient {
     func stream(userText: String, handlers: Handlers) -> GeminiFlashLiveStreamHandle {
         let handle = GeminiFlashLiveStreamHandle()
         handle.onCancel = { [weak self] in
-            Task { await self?.interruptActiveTurn() }
-        }
-
-        Task { [weak self] @MainActor in
-            guard let self else { return }
-            do {
-                try await ensureSession()
-                try Task.checkCancellation()
-                currentHandlers = handlers
-                pendingAudio.removeAll(keepingCapacity: false)
-                pendingSampleRate = 16_000
-                handlers.onOpen?()
-                await session?.sendContent(userText, turnComplete: true)
-            } catch {
-                handlers.onError?(error)
-                currentHandlers = nil
+            Task { [weak self] in
+                await self?.interruptActiveTurn()
             }
         }
 
+        Task { [weak self] in
+            await self?.startStreaming(userText: userText, handlers: handlers)
+        }
+
         return handle
+    }
+
+    private func startStreaming(userText: String, handlers: Handlers) async {
+        do {
+            try await ensureSession()
+            try Task.checkCancellation()
+            currentHandlers = handlers
+            pendingAudio.removeAll(keepingCapacity: false)
+            pendingSampleRate = 16_000
+            handlers.onOpen?()
+            await session?.sendContent(userText, turnComplete: true)
+        } catch {
+            handlers.onError?(error)
+            currentHandlers = nil
+        }
     }
 
     func shutdown() {
@@ -111,7 +116,7 @@ final class GeminiFlashLiveClient {
             ModelContent(role: "system", parts: [TextPart(text)])
         }
 
-        let model = aiService.liveGenerativeModel(
+        let model = aiService.liveModel(
             modelName: modelName,
             generationConfig: generation,
             systemInstruction: systemInstruction
@@ -156,7 +161,6 @@ final class GeminiFlashLiveClient {
             }
 
             if let transcript = content.outputAudioTranscription?.text,
-               let transcript,
                !transcript.isEmpty {
                 handlers.onTextDelta?(transcript)
             }
