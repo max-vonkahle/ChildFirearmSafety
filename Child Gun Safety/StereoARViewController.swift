@@ -8,8 +8,6 @@
 import UIKit
 import ARKit
 import SceneKit
-import CoreImage
-
 final class StereoARViewController: UIViewController, ARSessionDelegate {
     // AR session
     private let session = ARSession()
@@ -20,29 +18,18 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private let leftEye = SCNNode()
     private let rightEye = SCNNode()
 
-    // Passthrough views (camera images)
-    private var leftImageView: UIImageView!
-    private var rightImageView: UIImageView!
-
-    // SceneKit views (overlays for 3D content)
-    private var leftSCNView: SCNView!
-    private var rightSCNView: SCNView!
+    // Stereo AR views (render camera texture + 3D content)
+    private var leftARView: ARSCNView!
+    private var rightARView: ARSCNView!
 
     // Cardboard mask  reticle (UIKit, like ARFun)
     private var maskView: UIView!
     private var reticleView: UIView!
 
-    // Reuse CIContext for performance
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
-    private var isProcessingFrame = false
-
     // Adjustable parameters for I/O 2015 Cardboard (matching ARFun)
     private let eyeFOV: CGFloat = 60.0
-    private let cameraImageScale: CGFloat = 1.739
     // Default IPD; can still be overridden via StereoConfig if you want
     private var ipd: Float = 0.064
-    // Horizontal offset as percentage of image width for stereo hack
-    private let stereoOffset: CGFloat = 0.08
 
     // Preserve old config hook (so existing callers still compile)
     private var config = StereoConfig() {
@@ -71,33 +58,24 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // --- Camera passthrough image views ---
-        leftImageView = UIImageView()
-        leftImageView.contentMode = .scaleAspectFill
-        leftImageView.clipsToBounds = true
-        view.addSubview(leftImageView)
+        // --- Stereo AR views for camera passthrough  3D overlays ---
+        leftARView = ARSCNView()
+        leftARView.scene = scene
+        leftARView.session = session
+        leftARView.backgroundColor = .black
+        leftARView.rendersContinuously = true
+        leftARView.isPlaying = true
+        leftARView.automaticallyUpdatesLighting = false
+        view.addSubview(leftARView)
 
-        rightImageView = UIImageView()
-        rightImageView.contentMode = .scaleAspectFill
-        rightImageView.clipsToBounds = true
-        view.addSubview(rightImageView)
-
-        // --- SceneKit views for stereo 3D content ---
-        leftSCNView = SCNView()
-        leftSCNView.scene = scene
-        leftSCNView.backgroundColor = .clear
-        leftSCNView.isOpaque = false
-        leftSCNView.rendersContinuously = true
-        leftSCNView.isPlaying = true
-        view.addSubview(leftSCNView)
-
-        rightSCNView = SCNView()
-        rightSCNView.scene = scene
-        rightSCNView.backgroundColor = .clear
-        rightSCNView.isOpaque = false
-        rightSCNView.rendersContinuously = true
-        rightSCNView.isPlaying = true
-        view.addSubview(rightSCNView)
+        rightARView = ARSCNView()
+        rightARView.scene = scene
+        rightARView.session = session
+        rightARView.backgroundColor = .black
+        rightARView.rendersContinuously = true
+        rightARView.isPlaying = true
+        rightARView.automaticallyUpdatesLighting = false
+        view.addSubview(rightARView)
 
         // --- Camera rig (head  left/right eyes) ---
         baseCameraNode.camera = SCNCamera()
@@ -135,8 +113,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         scene.rootNode.addChildNode(boxNode)
 
         // Attach left/right eyes to SceneKit views
-        leftSCNView.pointOfView = leftEye
-        rightSCNView.pointOfView = rightEye
+        leftARView.pointOfView = leftEye
+        rightARView.pointOfView = rightEye
 
         // --- Cardboard mask  reticle (UIKit, like ARFun) ---
         maskView = UIView()
@@ -163,13 +141,9 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         let width = view.bounds.width / 2
         let height = view.bounds.height
 
-        // Left/right halves for camera images
-        leftImageView.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        rightImageView.frame = CGRect(x: width, y: 0, width: width, height: height)
-
-        // SceneKit views sit on top of the images
-        leftSCNView.frame = leftImageView.frame
-        rightSCNView.frame = rightImageView.frame
+        // Left/right halves for AR rendering
+        leftARView.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        rightARView.frame = CGRect(x: width, y: 0, width: width, height: height)
 
         // Cardboard mask covers whole screen
         maskView.frame = view.bounds
@@ -190,68 +164,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         print("StereoARViewController didUpdate session =", session)
         // Update head position immediately (fast)
         baseCameraNode.simdTransform = frame.camera.transform
-
-        // Skip frame if still processing previous one
-        if isProcessingFrame { return }
-        isProcessingFrame = true
-
-        // Copy out orientation & viewport info
-        let interfaceOrientation = view.window?.windowScene?.interfaceOrientation ?? .landscapeRight
-        let viewportSize = view.bounds.size
-        let stereoOffset = self.stereoOffset
-        let cameraImageScale = self.cameraImageScale
-
-        // Do ALL work with the frame's pixel buffer synchronously inside this method
-        autoreleasepool {
-            let pixelBuffer = frame.capturedImage
-            var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-
-            // Apply proper orientation transform using ARKit's displayTransform
-            let displayTransform = frame.displayTransform(for: interfaceOrientation, viewportSize: viewportSize)
-            ciImage = ciImage.transformed(by: displayTransform)
-
-            let imageWidth = ciImage.extent.width
-            let imageHeight = ciImage.extent.height
-
-            // Horizontal stereo offset in pixels
-            let offsetPixels = imageWidth * stereoOffset
-
-            // Left eye: sees more of the LEFT side of the image
-            let leftCropRect = CGRect(
-                x: 0,
-                y: 0,
-                width: imageWidth - offsetPixels,
-                height: imageHeight
-            )
-            let leftImage = ciImage.cropped(to: leftCropRect)
-
-            // Right eye: sees more of the RIGHT side of the image
-            let rightCropRect = CGRect(
-                x: offsetPixels,
-                y: 0,
-                width: imageWidth - offsetPixels,
-                height: imageHeight
-            )
-            let rightImage = ciImage.cropped(to: rightCropRect)
-
-            // Convert to CGImages using reusable context
-            guard let leftCGImage = ciContext.createCGImage(leftImage, from: leftImage.extent),
-                  let rightCGImage = ciContext.createCGImage(rightImage, from: rightImage.extent) else {
-                isProcessingFrame = false
-                return
-            }
-
-            let leftUIImage = UIImage(cgImage: leftCGImage, scale: cameraImageScale, orientation: .up)
-            let rightUIImage = UIImage(cgImage: rightCGImage, scale: cameraImageScale, orientation: .up)
-
-            // Update on main thread (we're already on main, but keep this to be explicit)
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.leftImageView.image = leftUIImage
-                self.rightImageView.image = rightUIImage
-                self.isProcessingFrame = false
-            }
-        }
     }
 
     // MARK: - Cardboard reticle / mask (ported from ARFun)
