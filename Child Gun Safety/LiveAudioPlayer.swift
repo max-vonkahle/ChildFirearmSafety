@@ -2,82 +2,118 @@
 //  LiveAudioPlayer.swift
 //  Child Gun Safety
 //
-//  Created by OpenAI Assistant.
-//
 
 import Foundation
 import AVFoundation
 
-@MainActor
 final class LiveAudioPlayer {
-    var onStart: (() -> Void)?
-    var onFinish: (() -> Void)?
 
-    private var engine: AVAudioEngine?
-    private var player: AVAudioPlayerNode?
-    private var format: AVAudioFormat?
+    static let shared = LiveAudioPlayer()
 
-    private(set) var isPlaying: Bool = false
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let liveFormat: AVAudioFormat
 
-    func play(pcm: Data, sampleRate: Double) throws {
-        guard !pcm.isEmpty else { return }
-
-        stop()
-
-        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16,
-                                         sampleRate: sampleRate,
-                                         channels: 1,
-                                         interleaved: true) else {
-            throw NSError(domain: "LiveAudioPlayer",
-                          code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "Unable to allocate audio format"])
+    private init() {
+        // Configure audio session for spoken audio playback.
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try session.setActive(true)
+        } catch {
+            // print("[Audio] AVAudioSession error:", error)
         }
 
-        let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
+        // Use a fixed 24 kHz mono float format for live Gemini audio.
+        guard let liveFormat = AVAudioFormat(
+            standardFormatWithSampleRate: 24_000,
+            channels: 1
+        ) else {
+            fatalError("Could not create liveFormat for LiveAudioPlayer")
+        }
+        self.liveFormat = liveFormat
+        // print("[Audio] liveFormat:", liveFormat)
+
         engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        // Connect player -> mainMixer; AVAudioEngine will insert a sample-rate
+        // converter from 24 kHz to the hardware rate automatically.
+        engine.connect(player, to: engine.mainMixerNode, format: liveFormat)
 
-        let frameLength = UInt32(pcm.count / 2)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
-            throw NSError(domain: "LiveAudioPlayer",
-                          code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "Unable to allocate audio buffer"])
+        do {
+            try engine.start()
+            // print("[Audio] AVAudioEngine started")
+        } catch {
+            // print("[Audio] Failed to start engine:", error)
         }
-        buffer.frameLength = frameLength
+    }
 
-        pcm.withUnsafeBytes { rawBuffer in
-            guard let source = rawBuffer.bindMemory(to: Int16.self).baseAddress else { return }
-            buffer.int16ChannelData?.pointee.update(from: source, count: Int(frameLength))
+    /// Play a chunk of raw PCM16 mono audio.
+    ///
+    /// - Parameters:
+    ///   - data: Little-endian 16-bit signed mono PCM samples (Gemini Live output).
+    ///   - sampleRate: The model’s sample rate (usually 24_000). We ignore it for now
+    ///                 and play at the device’s native rate; this may change speed/pitch
+    ///                 slightly but avoids crashes.
+    func playPCM16(_ data: Data, sampleRate: Double) {
+        guard !data.isEmpty else { return }
+
+        let bytesPerSample = MemoryLayout<Int16>.size
+        let frameCount = data.count / bytesPerSample
+        guard frameCount > 0 else { return }
+
+        // Create a buffer in the live format (float32, deinterleaved).
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: liveFormat,
+            frameCapacity: AVAudioFrameCount(frameCount)
+        ) else {
+            // print("[Audio] Failed to create buffer")
+            return
+        }
+        buffer.frameLength = AVAudioFrameCount(frameCount)
+
+        guard let channelData = buffer.floatChannelData else {
+            // print("[Audio] Missing floatChannelData")
+            return
         }
 
-        try engine.start()
-        player.play()
-
-        isPlaying = true
-        onStart?()
-
-        player.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
-            Task { @MainActor in
-                guard let self else { return }
-                self.isPlaying = false
-                self.onFinish?()
-                self.stop()
+        // Convert Int16 mono → Float32 mono in channel 0.
+        data.withUnsafeBytes { rawBuffer in
+            let src = rawBuffer.bindMemory(to: Int16.self)
+            let dst = channelData[0]
+            for i in 0..<frameCount {
+                dst[i] = Float(src[i]) / Float(Int16.max)
             }
         }
 
-        self.engine = engine
-        self.player = player
-        self.format = format
+        // If liveFormat has more than one channel, zero the extra channels.
+        if liveFormat.channelCount > 1 {
+            for ch in 1..<Int(liveFormat.channelCount) {
+                memset(
+                    channelData[ch],
+                    0,
+                    Int(frameCount) * MemoryLayout<Float>.size
+                )
+            }
+        }
+
+        if !engine.isRunning {
+            do {
+                try engine.start()
+                // print("[Audio] Engine restarted")
+            } catch {
+                // print("[Audio] Failed to restart engine:", error)
+            }
+        }
+
+        if !player.isPlaying {
+            player.play()
+        }
+
+        // print("[Audio] Scheduling buffer: \(data.count) bytes, \(frameCount) frames (input sr \(sampleRate), liveFormat sr \(liveFormat.sampleRate))")
+        player.scheduleBuffer(buffer, completionHandler: nil)
     }
 
     func stop() {
-        player?.stop()
-        engine?.stop()
-        engine?.reset()
-        player = nil
-        engine = nil
-        format = nil
-        isPlaying = false
+        player.stop()
     }
 }

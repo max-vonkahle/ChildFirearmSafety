@@ -41,3 +41,20 @@ struct ChildGunSafetyApp: App {
         }
     }
 }
+
+
+//import SwiftUI
+//import FirebaseCore
+//
+//@main
+//struct ChildGunSafetyApp: App {
+//    init() {
+//        FirebaseApp.configure()
+//    }
+//
+//    var body: some Scene {
+//        WindowGroup {
+//            LiveVoiceTestView()   // 👈 TEMP: root is the live test
+//        }
+//    }
+//}
