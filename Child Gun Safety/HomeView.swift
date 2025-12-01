@@ -10,7 +10,6 @@ import SwiftUI
 
 struct HomeView: View {
     @AppStorage("cardboardMode") private var cardboardMode = false
-    @StateObject private var cardboardFit = CardboardFit()
     
     var body: some View {
         NavigationStack {
@@ -68,7 +67,6 @@ struct HomeView: View {
                 }
             }
         }
-        .environmentObject(cardboardFit)
     }
 }
 

@@ -17,23 +17,15 @@ final class VoiceCoach: ObservableObject {
 
     // Socratic, question-forward system prompt.
     private let systemPrompt = """
-    You are a child‑safety coach guiding a young learner to *say the safe plan in their own words*.
+    You are a child‑safety coach guiding a young learner to stay safe if they find a firearm.
 
-    Core rules (never state as commands; elicit them through questions):
-    • Don't touch it. • Move away. • Tell a trusted adult.
+    Core rules that you are trying to instill in them:
+    • Don't touch it. • Run away. • Tell a trusted adult.
+    
+    Your are guiding them through a behavioral skills training where they will see a gun.
+    You want to teach them the core rules, then have them repeat them as well as act them out.
 
-    Style:
-    - Be Socratic. Ask one short, concrete question at a time (6–14 words).
-    - Avoid didactic language, instructions, or judgments. Do **not** say "you should…".
-    - Default to a single sentence. Only add a brief affirmation like "Nice thinking." when helpful.
-    - Never explain how to operate, handle, or identify a firearm or any weapon.
-    - If the child asks "What do I do?" respond with a guiding question that leads them to name the three steps.
-    - Prefer neutral phrasing like "something that might be unsafe" unless the child names the object.
-    - Keep the conversation moving: acknowledge briefly, then ask a follow‑up question.
-    - Do not ask about body positioning or hands unless the child explicitly asks; focus only on the three rules.
-    - No lists in outputs; no emojis; no role‑play beyond being a calm coach.
-
-    Your objective is to help the child independently state: don't touch it, move away, and tell a trusted adult. Stay concise and question‑forward at all times.
+    Your objective is to help the child learn: don't touch it, run away, and tell a trusted adult.
     """
 
     private lazy var live = GeminiFlashLiveClient(systemInstruction: systemPrompt)
@@ -42,6 +34,7 @@ final class VoiceCoach: ObservableObject {
     private var liveHandle: GeminiFlashLiveStreamHandle?
     private var isTurnInFlight = false
     private var isConversationActive = false
+    private var micStoppedForCurrentTurn = false
 
     // Lifecycle flag to coordinate LLM streaming and playback
     private var llmActive = false
@@ -80,6 +73,7 @@ final class VoiceCoach: ObservableObject {
         llmActive = false
         isTurnInFlight = false
         isConversationActive = false
+        micStoppedForCurrentTurn = false
     }
 
     func startSession() {
@@ -105,6 +99,7 @@ final class VoiceCoach: ObservableObject {
         liveAudio.stop()
         live.shutdown()
         isConversationActive = false
+        micStoppedForCurrentTurn = false
         state = .idle
     }
 
@@ -127,7 +122,7 @@ final class VoiceCoach: ObservableObject {
             print("[VC] scriptedIntro: begin")
 
             // Keep this concise and neutral; do not teach handling, only frame the activity.
-            let intro = "Hi there. Let's do a quick safety practice. Your friend needs help looking for their phone. Take a look around the room."
+            let intro = "Hi there. Let's do a quick safety practice. Can you show me what you learned if you find a gun like this?"
 
             // Ask the Live model to say this line to the child, then stop.
             let userText = "You are starting the practice. Say this to the child, then stop: \"\(intro)\""
@@ -204,7 +199,14 @@ final class VoiceCoach: ObservableObject {
             },
             onAudioReady: { [weak self] data, rate in
                 Task { @MainActor in
-                    self?.playLiveAudio(data: data, sampleRate: rate)
+                    guard let self else { return }
+                    // Gate the mic so the model does not hear its own audio.
+                    if !self.micStoppedForCurrentTurn {
+                        print("🔇 [VC] Stopping mic for model audio")
+                        LiveMicController.shared.stop()
+                        self.micStoppedForCurrentTurn = true
+                    }
+                    self.playLiveAudio(data: data, sampleRate: rate)
                 }
             },
             onDone: { [weak self] in
@@ -213,6 +215,7 @@ final class VoiceCoach: ObservableObject {
                     self.llmActive = false
                     self.isTurnInFlight = false
                     self.isConversationActive = false
+                    self.micStoppedForCurrentTurn = false
                     print("✅ [VC] audio turn complete")
                     
                     // After the model responds, resume listening for the next utterance
@@ -227,6 +230,7 @@ final class VoiceCoach: ObservableObject {
                     self.llmActive = false
                     self.isTurnInFlight = false
                     self.isConversationActive = false
+                    self.micStoppedForCurrentTurn = false
                     self.append("\n[error] \(err.localizedDescription)")
                     self.liveAudio.stop()
                     LiveMicController.shared.stop()

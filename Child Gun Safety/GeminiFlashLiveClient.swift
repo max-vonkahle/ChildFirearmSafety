@@ -150,7 +150,7 @@ final class GeminiFlashLiveClient {
         #if DEBUG
         // Only print every 50th chunk to reduce log spam
         if Int.random(in: 0..<50) == 0 {
-            print("🎙 [Live] sending audio chunk of \(data.count) bytes")
+            // print("🎙 [Live] sending audio chunk of \(data.count) bytes")
         }
         #endif
         
@@ -242,7 +242,7 @@ final class GeminiFlashLiveClient {
         }
         
         // Debug logging:
-        print("🟣 [Live] connecting live model:", modelName)
+        // print("🟣 [Live] connecting live model:", modelName)
 
         let model = aiService.liveModel(
             modelName: modelName,
@@ -280,13 +280,17 @@ final class GeminiFlashLiveClient {
 
             // High-level info for each content message
             #if DEBUG
-            print("🟣 [Live] content: modelTurn? \(serverContent.modelTurn != nil), turnComplete: \(serverContent.isTurnComplete)")
+            // print("🟣 [Live] content: modelTurn? \(serverContent.modelTurn != nil), turnComplete: \(serverContent.isTurnComplete)")
             #endif
 
             // 1) Model turn content, if present.
             if let turn = serverContent.modelTurn {
                 #if DEBUG
-                print("🟣 [Live] modelTurn parts count: \(turn.parts.count)")
+                print("🟣 [Live] NEW MODEL TURN (parts: \(turn.parts.count))")
+                #endif
+
+                #if DEBUG
+                // print("🟣 [Live] modelTurn parts count: \(turn.parts.count)")
                 #endif
 
                 for part in turn.parts {
@@ -303,17 +307,22 @@ final class GeminiFlashLiveClient {
                         if mime.hasPrefix("audio/pcm") {
                             let rate = Self.sampleRate(from: inlinePart.mimeType) ?? 24_000
                             #if DEBUG
-                            print("🔊 [LLM ← audio] \(inlinePart.data.count) bytes @ \(rate) Hz")
+                            // print("🔊 [LLM ← audio] \(inlinePart.data.count) bytes @ \(rate) Hz")
                             #endif
+                            pendingSampleRate = rate
+                            pendingAudio.append(inlinePart.data)
                             handlers.onAudioReady?(inlinePart.data, rate)
                         } else {
                             #if DEBUG
-                            print("🟡 [Live] inline data (non-audio) mime=\(inlinePart.mimeType)")
+                            // print("🟡 [Live] inline data (non-audio) mime=\(inlinePart.mimeType)")
                             #endif
                         }
+                        #if DEBUG
+                        print("🔍 [Live] Model audio part: \(inlinePart.mimeType), bytes: \(inlinePart.data.count)")
+                        #endif
                     } else {
                         #if DEBUG
-                        print("🟡 [Live] ignored part type:", type(of: part))
+                        // print("🟡 [Live] ignored part type:", type(of: part))
                         #endif
                     }
                 }
@@ -325,6 +334,10 @@ final class GeminiFlashLiveClient {
             }
 
             if serverContent.isTurnComplete {
+                #if DEBUG
+                print("🟣 [Live] MODEL TURN COMPLETE — buffered audio size: \(pendingAudio.count) bytes at \(pendingSampleRate) Hz")
+                #endif
+                pendingAudio.removeAll(keepingCapacity: false)
                 #if DEBUG
                 print("✅ [Live] turn complete")
                 #endif

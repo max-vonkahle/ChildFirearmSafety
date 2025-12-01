@@ -42,7 +42,6 @@ struct ARSceneView<Overlay: View>: View {
                 StereoARContainer()
                     .ignoresSafeArea()
                     .scaleEffect(0.98)
-                CardboardOverlay()
                     .ignoresSafeArea()
             } else {
                 ARViewContainer(isArmed: $isArmed,
@@ -67,16 +66,16 @@ struct ARSceneView<Overlay: View>: View {
                             cleanupExitAutoHide()
                             onExit()
                         } label: {
-                            Image(systemName: "xmark")
-                                .imageScale(.large)
-                                .padding(12)
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 28, weight: .bold))
+                                .padding(16)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
                         .accessibilityLabel("Exit to Home")
                         .transition(.opacity.combined(with: .scale))
                     }
-                    .padding(.top, 8)
-                    .padding(.trailing, 12)
+                    .padding(.top, 32)
+                    .padding(.trailing, 16)
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: showExitUI)

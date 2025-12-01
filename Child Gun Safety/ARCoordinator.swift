@@ -63,6 +63,9 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private let depthMargin: Float = 0.07         // hand must be this much closer than gun (meters)
     private let decisionInterval: CFTimeInterval = 0.15
 
+    // Prevent overlapping frame processing
+    private var isProcessingFrame = false
+
     // MARK: - Wiring
 
     func bind(arView: ARView, onDisarm: @escaping () -> Void) {
@@ -140,6 +143,11 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     private func onFrame() {
+        // Prevent overlapping frame processing
+        if isProcessingFrame { return }
+        isProcessingFrame = true
+        defer { isProcessingFrame = false }
+
         guard let arView = arView,
               let frame = arView.session.currentFrame,
               placedAnchor != nil,
@@ -151,60 +159,64 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         if t - lastDecisionAt < decisionInterval { return }
         lastDecisionAt = t
 
-        // --- Proximity & back-away detection
-        if let d = gunDistanceFromCamera(frame: frame) {
-            let tNow = t
-            // Enter near zone once
-            if d < 1.0, wasNear == false {
-                wasNear = true
-                lastNearDistance = d
-                lastNearTime = tNow
-                NotificationCenter.default.post(name: .arEvent, object: nil,
-                    userInfo: [BusKey.arevent: AREvent.gunProximityNear(distance: d)])
+        autoreleasepool {
+            // --- Proximity & back-away detection
+            if let d = gunDistanceFromCamera(frame: frame) {
+                let tNow = t
+                // Enter near zone once
+                if d < 1.0, wasNear == false {
+                    wasNear = true
+                    lastNearDistance = d
+                    lastNearTime = tNow
+                    NotificationCenter.default.post(name: .arEvent, object: nil,
+                        userInfo: [BusKey.arevent: AREvent.gunProximityNear(distance: d)])
+                }
+                // Detect backing away within a short window
+                if wasNear, d - lastNearDistance > 0.7, tNow - lastNearTime < 3.0 {
+                    wasNear = false
+                    NotificationCenter.default.post(name: .arEvent, object: nil,
+                        userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: d - lastNearDistance)])
+                }
+                // Update running minimum distance while in near state
+                if wasNear { lastNearDistance = min(lastNearDistance, d) }
             }
-            // Detect backing away within a short window
-            if wasNear, d - lastNearDistance > 0.7, tNow - lastNearTime < 3.0 {
-                wasNear = false
-                NotificationCenter.default.post(name: .arEvent, object: nil,
-                    userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: d - lastNearDistance)])
+
+            // Vision hand pose
+            do {
+                try handRequestHandler.perform([handRequest],
+                                               on: frame.capturedImage,
+                                               orientation: currentImageOrientation())
+            } catch {
+                return
             }
-            // Update running minimum distance while in near state
-            if wasNear { lastNearDistance = min(lastNearDistance, d) }
-        }
 
-        // Vision hand pose
-        do {
-            try handRequestHandler.perform([handRequest],
-                                           on: frame.capturedImage,
-                                           orientation: currentImageOrientation())
-        } catch { return }
+            guard let observations = handRequest.results, !observations.isEmpty else { return }
+            guard let gunRect = gunScreenRect() else { return }
 
-        guard let observations = handRequest.results, !observations.isEmpty else { return }
-        guard let gunRect = gunScreenRect() else { return }
+            // Check hands against gun rect + depth
+            for hand in observations {
+                let pts = (try? hand.recognizedPoints(.all)) ?? [:]
+                // fingertips first, then wrist
+                for key in [VNHumanHandPoseObservation.JointName.indexTip,
+                            .middleTip, .wrist] {
+                    guard let rp = pts[key], rp.confidence > 0.35 else { continue }
+                    let hp = visionNormToScreen(rp.location)
 
-        // Check hands against gun rect + depth
-        for hand in observations {
-            let pts = (try? hand.recognizedPoints(.all)) ?? [:]
-            // fingertips first, then wrist
-            for key in [VNHumanHandPoseObservation.JointName.indexTip,
-                        .middleTip, .wrist] {
-                guard let rp = pts[key], rp.confidence > 0.35 else { continue }
-                let hp = visionNormToScreen(rp.location)
+                    // 1) inside/near the gun’s screen footprint?
+                    guard gunRect.contains(hp) else { continue }
 
-                // 1) inside/near the gun’s screen footprint?
-                guard gunRect.contains(hp) else { continue }
+                    // 2) hand closer than gun?
+                    if let depthBuf = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap,
+                       let handZ = sampleDepthAtScreen(depthBuf, screenPoint: hp),
+                       let gunZ = gunDistanceFromCamera(frame: frame),
+                       handZ + depthMargin < gunZ {
 
-                // 2) hand closer than gun?
-                if let depthBuf = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap,
-                   let handZ = sampleDepthAtScreen(depthBuf, screenPoint: hp),
-                   let gunZ = gunDistanceFromCamera(frame: frame),
-                   handZ + depthMargin < gunZ {
-
-                    warningShown = true
-                    setGunVisible(false)
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    NotificationCenter.default.post(name: .arEvent, object: nil, userInfo: [BusKey.arevent: AREvent.reachGesture])
-                    return
+                        warningShown = true
+                        setGunVisible(false)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        NotificationCenter.default.post(name: .arEvent, object: nil, userInfo: [BusKey.arevent: AREvent.reachGesture])
+                        return
+                    }
                 }
             }
         }

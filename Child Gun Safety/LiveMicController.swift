@@ -2,9 +2,8 @@
 //  LiveMicController.swift
 //  Child Gun Safety
 //
-//  Captures microphone audio and streams 16-bit PCM mono @ 24 kHz
-//  into GeminiFlashLiveClient. The Gemini Live API performs its own
-//  voice activity detection (VAD), so the client streams continuously.
+//  Captures microphone audio and resamples to 16-bit PCM mono @ 16 kHz
+//  for streaming into GeminiFlashLiveClient.
 //
 
 import Foundation
@@ -24,8 +23,7 @@ final class LiveMicController {
     /// Called if anything goes wrong with audio capture.
     var onError: ((Error) -> Void)?
 
-    /// Optional callbacks for UI state; not automatically triggered now that
-    /// the Live API performs server-side VAD.
+    /// Optional callbacks for UI state.
     var onSpeechStart: (() -> Void)?
     var onSpeechEnd: (() -> Void)?
     
@@ -34,11 +32,14 @@ final class LiveMicController {
     private let engine = AVAudioEngine()
     private var isRunning = false
 
-    /// Target sample rate + format for Gemini Live audio input.
-    private let targetSampleRate: Double = 24_000
+    /// Target sample rate for Gemini Live audio input (16 kHz per Live API docs).
+    private let targetSampleRate: Double = 16_000
     private let rmsLogFloor: Float = -60.0
 
     private var currentClient: GeminiFlashLiveClient?
+    
+    // Resampling converter
+    private var converter: AVAudioConverter?
 
     // MARK: - Speech recognition debug
 
@@ -77,6 +78,7 @@ final class LiveMicController {
         let input = engine.inputNode
         input.removeTap(onBus: 0)
         engine.stop()
+        converter = nil
         stopSpeechRecognition()
 
         // Deactivate audio session
@@ -127,7 +129,7 @@ final class LiveMicController {
             options: [.defaultToSpeaker, .allowBluetooth]
         )
 
-        // Ask for 24 kHz if possible so conversion is simple.
+        // Ask for 16 kHz if possible
         try session.setPreferredSampleRate(targetSampleRate)
 
         try session.setActive(true, options: [])
@@ -137,19 +139,38 @@ final class LiveMicController {
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
 
+        // Create target format: 16-bit PCM mono @ 16 kHz
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: targetSampleRate,
+            channels: 1,
+            interleaved: true
+        ) else {
+            throw NSError(domain: "LiveMic", code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to create target audio format"])
+        }
+
+        // Create converter from input format to target format
+        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+            throw NSError(domain: "LiveMic", code: 4,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to create audio converter"])
+        }
+        self.converter = converter
+
         #if DEBUG
-        print("[LiveMic] Input format:", inputFormat)
+        // print("[LiveMic] Input format:", inputFormat)
+        // print("[LiveMic] Target format:", targetFormat)
         #endif
 
         input.removeTap(onBus: 0)
 
         input.installTap(
             onBus: 0,
-            bufferSize: 1024,
+            bufferSize: 4096,  // Larger buffer for resampling
             format: inputFormat
         ) { [weak self] buffer, _ in
             guard let self else { return }
-            self.process(buffer: buffer, inputFormat: inputFormat, client: client)
+            self.process(buffer: buffer, converter: converter, client: client)
         }
 
         engine.prepare()
@@ -160,60 +181,78 @@ final class LiveMicController {
 
     // MARK: - Buffer processing
 
-    /// Convert the incoming buffer into 16-bit mono @ 24k and stream.
+    /// Resample and convert the buffer to 16-bit mono @ 16k, then stream.
     private func process(
         buffer: AVAudioPCMBuffer,
-        inputFormat: AVAudioFormat,
+        converter: AVAudioConverter,
         client: GeminiFlashLiveClient
     ) {
-        guard let floatData = buffer.floatChannelData else {
-            return
-        }
-
-        let channelCount = Int(inputFormat.channelCount)
-        let frameCount = Int(buffer.frameLength)
-        if frameCount == 0 { return }
-
-        // Compute RMS for UI level meters.
+        // Compute RMS for UI level meters (on original buffer)
         let rms = bufferRMS(buffer: buffer)
         onLevelUpdate?(rms)
 
-        // Feed the buffer into the debug speech recognizer to log words sent upstream.
+        // Feed the buffer into the debug speech recognizer
         recognitionRequest?.append(buffer)
 
-        // Downmix to mono and clamp to [-1, 1], then quantize to Int16.
-        var pcmData = Data()
-        pcmData.reserveCapacity(frameCount * MemoryLayout<Int16>.size)
+        // Calculate output buffer size based on sample rate conversion
+        let inputFrameCount = buffer.frameLength
+        let conversionRatio = converter.outputFormat.sampleRate / converter.inputFormat.sampleRate
+        let outputFrameCapacity = AVAudioFrameCount(Double(inputFrameCount) * conversionRatio)
 
-        for frame in 0..<frameCount {
-            var sample: Float = 0.0
-            // Average all channels into one mono sample.
-            for ch in 0..<channelCount {
-                let channel = floatData[ch]
-                sample += channel[frame]
-            }
-            sample /= Float(max(channelCount, 1))
+        // Create output buffer for converted audio
+        guard let outputBuffer = AVAudioPCMBuffer(
+            pcmFormat: converter.outputFormat,
+            frameCapacity: outputFrameCapacity
+        ) else {
+            // print("🟥 [LiveMic] Failed to create output buffer")
+            return
+        }
 
-            // Clamp to [-1, 1].
-            let clamped = max(-1.0, min(1.0, sample))
+        var error: NSError?
+        let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
+            outStatus.pointee = .haveData
+            return buffer
+        }
 
-            // Convert to 16-bit signed integer.
-            let intSample = Int16(clamped * Float(Int16.max))
-            var littleEndian = intSample.littleEndian
+        converter.convert(to: outputBuffer, error: &error, withInputFrom: inputBlock)
 
-            withUnsafeBytes(of: &littleEndian) { bytes in
-                pcmData.append(bytes.bindMemory(to: UInt8.self))
+        if let error {
+            // print("🟥 [LiveMic] Conversion error: \(error)")
+            return
+        }
+
+        // Extract Int16 data from the output buffer
+        guard let int16Data = outputBuffer.int16ChannelData else {
+            // print("🟥 [LiveMic] No int16 channel data")
+            return
+        }
+
+        let frameCount = Int(outputBuffer.frameLength)
+        let channel = int16Data[0]
+        
+        // Convert Int16 array to Data
+        var pcmData = Data(capacity: frameCount * MemoryLayout<Int16>.size)
+        for i in 0..<frameCount {
+            var sample = channel[i].littleEndian
+            withUnsafeBytes(of: &sample) { bytes in
+                pcmData.append(contentsOf: bytes)
             }
         }
 
-        // Stream the PCM chunk into Gemini Live.
+        #if DEBUG
+        // Occasional logging to verify we're sending data
+        if Int.random(in: 0..<100) == 0 {
+            // print("🎤 [LiveMic] Converted \(inputFrameCount) frames → \(frameCount) frames (\(pcmData.count) bytes)")
+        }
+        #endif
+
+        // Stream the PCM chunk into Gemini Live
         Task { @MainActor in
             await client.sendAudioChunk(pcmData)
         }
     }
 
     // MARK: - Utility
-
 
     /// Compute RMS in dBFS for a buffer (for UI level meters).
     private func bufferRMS(buffer: AVAudioPCMBuffer) -> Float {
@@ -238,7 +277,7 @@ final class LiveMicController {
         guard totalSamples > 0 else { return rmsLogFloor }
         let meanSquare = sumSquares / Float(totalSamples)
         let rms = sqrt(meanSquare)
-        let db = 20.0 * log10(rms + 1e-7)  // avoid log(0)
+        let db = 20.0 * log10(rms + 1e-7)
         return max(db, rmsLogFloor)
     }
 
@@ -252,7 +291,7 @@ final class LiveMicController {
         lastPrintedTranscript = ""
 
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            print("⚠️ [LiveMic] Speech recognizer unavailable for debug logging")
+            // print("⚠️ [LiveMic] Speech recognizer unavailable for debug logging")
             return
         }
 
@@ -270,7 +309,7 @@ final class LiveMicController {
 
                     if text != self.lastPrintedTranscript {
                         self.lastPrintedTranscript = text
-                        print("🗣️ [LiveMic][debug ASR] \(text)")
+                         print("🗣️ [LiveMic][debug ASR] \(text)")
                     }
                 }
             }
@@ -294,5 +333,4 @@ final class LiveMicController {
         recognitionTask = nil
         lastPrintedTranscript = ""
     }
-
 }
