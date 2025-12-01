@@ -3,11 +3,13 @@
 //  Child Gun Safety
 //
 //  Captures microphone audio and streams 16-bit PCM mono @ 24 kHz
-//  into GeminiFlashLiveClient with automatic Voice Activity Detection.
+//  into GeminiFlashLiveClient. The Gemini Live API performs its own
+//  voice activity detection (VAD), so the client streams continuously.
 //
 
 import Foundation
 import AVFoundation
+import Speech
 
 @MainActor
 final class LiveMicController {
@@ -21,13 +23,12 @@ final class LiveMicController {
 
     /// Called if anything goes wrong with audio capture.
     var onError: ((Error) -> Void)?
-    
-    /// Called when the user is detected to be speaking.
-    var onSpeechStart: (() -> Void)?
-    
-    /// Called when speech ends (silence detected).
-    var onSpeechEnd: (() -> Void)?
 
+    /// Optional callbacks for UI state; not automatically triggered now that
+    /// the Live API performs server-side VAD.
+    var onSpeechStart: (() -> Void)?
+    var onSpeechEnd: (() -> Void)?
+    
     // MARK: - Private state
 
     private let engine = AVAudioEngine()
@@ -35,42 +36,25 @@ final class LiveMicController {
 
     /// Target sample rate + format for Gemini Live audio input.
     private let targetSampleRate: Double = 24_000
-    private let vadLogFloor: Float = -60.0
+    private let rmsLogFloor: Float = -60.0
 
     private var currentClient: GeminiFlashLiveClient?
-    
-    // MARK: - VAD Configuration
-    
-    /// Threshold in dB below which we consider it silence.
-    /// Adjust based on your environment: -40 to -50 for quiet rooms, -30 for noisier.
-    private let silenceThreshold: Float = -45.0
-    
-    /// How many consecutive silent buffers before we consider speech ended.
-    /// At ~21ms per buffer (1024 samples @ 48kHz), 50 buffers ≈ 1 second
-    private let silenceBuffersRequired: Int = 50
-    
-    /// How many consecutive speech buffers before we consider speech started.
-    /// 10 buffers ≈ 200ms to avoid false triggers
-    private let speechBuffersRequired: Int = 10
-    
-    private var consecutiveSilentBuffers: Int = 0
-    private var consecutiveSpeechBuffers: Int = 0
-    private var isSpeaking: Bool = false
-    private var hasDetectedAnySpeech: Bool = false
+
+    // MARK: - Speech recognition debug
+
+    private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private var lastPrintedTranscript: String = ""
 
     // MARK: - Public API
 
     /// Starts capturing mic audio and streaming it into GeminiFlashLiveClient.
-    /// Will automatically detect when the user stops speaking and end the turn.
     func startStreaming(to client: GeminiFlashLiveClient = .shared) {
         guard !isRunning else { return }
 
         currentClient = client
-        consecutiveSilentBuffers = 0
-        consecutiveSpeechBuffers = 0
-        isSpeaking = false
-        hasDetectedAnySpeech = false
-        
+
         Task {
             do {
                 try await configureAudioSession()
@@ -88,12 +72,12 @@ final class LiveMicController {
         guard isRunning else { return }
         isRunning = false
 
-        let client = currentClient
         currentClient = nil
 
         let input = engine.inputNode
         input.removeTap(onBus: 0)
         engine.stop()
+        stopSpeechRecognition()
 
         // Deactivate audio session
         do {
@@ -170,6 +154,8 @@ final class LiveMicController {
 
         engine.prepare()
         try engine.start()
+
+        startSpeechRecognition()
     }
 
     // MARK: - Buffer processing
@@ -188,12 +174,12 @@ final class LiveMicController {
         let frameCount = Int(buffer.frameLength)
         if frameCount == 0 { return }
 
-        // Compute RMS for VAD and UI.
+        // Compute RMS for UI level meters.
         let rms = bufferRMS(buffer: buffer)
         onLevelUpdate?(rms)
 
-        // Voice Activity Detection
-        performVAD(rmsDB: rms)
+        // Feed the buffer into the debug speech recognizer to log words sent upstream.
+        recognitionRequest?.append(buffer)
 
         // Downmix to mono and clamp to [-1, 1], then quantize to Int16.
         var pcmData = Data()
@@ -226,59 +212,16 @@ final class LiveMicController {
         }
     }
 
-    // MARK: - Voice Activity Detection
-
-    private func performVAD(rmsDB: Float) {
-        let isSilent = rmsDB < silenceThreshold
-
-        if isSilent {
-            consecutiveSilentBuffers += 1
-            consecutiveSpeechBuffers = 0
-            
-            // If we were speaking and now have enough silence, end the turn
-            if isSpeaking && consecutiveSilentBuffers >= silenceBuffersRequired {
-                isSpeaking = false
-                print("🔇 [VAD] Speech ended (silence detected)")
-                onSpeechEnd?()
-                
-                // Automatically stop the mic after detecting speech end
-                // Only if we had detected some speech first
-                if hasDetectedAnySpeech {
-                    Task { @MainActor in
-                        self.stop()
-                    }
-                }
-            }
-        } else {
-            consecutiveSpeechBuffers += 1
-            consecutiveSilentBuffers = 0
-            
-            // If we weren't speaking and now have enough speech, start the turn
-            if !isSpeaking && consecutiveSpeechBuffers >= speechBuffersRequired {
-                isSpeaking = true
-                hasDetectedAnySpeech = true
-                print("🎙️ [VAD] Speech started")
-                onSpeechStart?()
-            }
-        }
-        
-        #if DEBUG
-        // Uncomment for debugging VAD:
-        // if consecutiveSilentBuffers % 10 == 0 || consecutiveSpeechBuffers % 10 == 0 {
-        //     print("[VAD] RMS: \(rmsDB) dB | Silent: \(consecutiveSilentBuffers) | Speech: \(consecutiveSpeechBuffers)")
-        // }
-        #endif
-    }
-
     // MARK: - Utility
 
-    /// Compute RMS in dBFS for a buffer (for VAD / level meters).
+
+    /// Compute RMS in dBFS for a buffer (for UI level meters).
     private func bufferRMS(buffer: AVAudioPCMBuffer) -> Float {
-        guard let floatData = buffer.floatChannelData else { return vadLogFloor }
+        guard let floatData = buffer.floatChannelData else { return rmsLogFloor }
 
         let channelCount = Int(buffer.format.channelCount)
         let frameCount = Int(buffer.frameLength)
-        if frameCount == 0 { return vadLogFloor }
+        if frameCount == 0 { return rmsLogFloor }
 
         var sumSquares: Float = 0.0
         var totalSamples = 0
@@ -292,10 +235,64 @@ final class LiveMicController {
             }
         }
 
-        guard totalSamples > 0 else { return vadLogFloor }
+        guard totalSamples > 0 else { return rmsLogFloor }
         let meanSquare = sumSquares / Float(totalSamples)
         let rms = sqrt(meanSquare)
         let db = 20.0 * log10(rms + 1e-7)  // avoid log(0)
-        return max(db, vadLogFloor)
+        return max(db, rmsLogFloor)
     }
+
+    // MARK: - Speech recognition logging
+
+    private func startSpeechRecognition() {
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        recognitionRequest?.shouldReportPartialResults = true
+        lastPrintedTranscript = ""
+
+        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+            print("⚠️ [LiveMic] Speech recognizer unavailable for debug logging")
+            return
+        }
+
+        guard let recognitionRequest else { return }
+
+        recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+            guard let self else { return }
+
+            if let result {
+                let text = result.bestTranscription.formattedString
+                if !text.isEmpty {
+                    if self.lastPrintedTranscript.isEmpty {
+                        self.onSpeechStart?()
+                    }
+
+                    if text != self.lastPrintedTranscript {
+                        self.lastPrintedTranscript = text
+                        print("🗣️ [LiveMic][debug ASR] \(text)")
+                    }
+                }
+            }
+
+            if let error {
+                print("⚠️ [LiveMic] Speech recognition error: \(error.localizedDescription)")
+                self.recognitionTask?.cancel()
+                self.recognitionTask = nil
+            }
+        }
+    }
+
+    private func stopSpeechRecognition() {
+        if !lastPrintedTranscript.isEmpty {
+            onSpeechEnd?()
+        }
+
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionRequest = nil
+        recognitionTask = nil
+        lastPrintedTranscript = ""
+    }
+
 }
