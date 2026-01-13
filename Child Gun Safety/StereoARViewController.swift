@@ -8,7 +8,7 @@
 import UIKit
 import ARKit
 import SceneKit
-import CoreImage
+import MetalKit
 
 final class StereoARViewController: UIViewController, ARSessionDelegate {
     // AR session
@@ -20,9 +20,18 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private let leftEye = SCNNode()
     private let rightEye = SCNNode()
 
-    // Passthrough views (camera images)
-    private var leftImageView: UIImageView!
-    private var rightImageView: UIImageView!
+    // Model templates and placed nodes (for loading saved rooms)
+    private var modelTemplates: [String: SCNNode] = [:]  // asset name -> template node
+    private var placedNodes: [SCNNode] = []  // All placed asset nodes
+
+    // GPU-accelerated passthrough views using Metal
+    private var metalDevice: MTLDevice!
+    private var leftMetalView: MTKView!
+    private var rightMetalView: MTKView!
+    private var commandQueue: MTLCommandQueue!
+    private var textureCache: CVMetalTextureCache!
+    private var pipelineState: MTLRenderPipelineState!
+    private var sampler: MTLSamplerState!
 
     // SceneKit views (overlays for 3D content)
     private var leftSCNView: SCNView!
@@ -32,9 +41,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var maskView: UIView!
     private var reticleView: UIView!
 
-    // Reuse CIContext for performance
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
-    private var isProcessingFrame = false
+    // Current frame texture (updated each frame, rendered by MTKView)
+    private var currentPixelBuffer: CVPixelBuffer?
+    private let frameLock = NSLock()
+    private var frameCounter: Int = 0
 
     // Adjustable parameters for I/O 2015 Cardboard (matching ARFun)
     private let eyeFOV: CGFloat = 60.0
@@ -71,16 +81,41 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // --- Camera passthrough image views ---
-        leftImageView = UIImageView()
-        leftImageView.contentMode = .scaleAspectFill
-        leftImageView.clipsToBounds = true
-        view.addSubview(leftImageView)
+        // --- Listen for world map load notification ---
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLoadWorldMap(_:)),
+            name: .loadWorldMap,
+            object: nil
+        )
 
-        rightImageView = UIImageView()
-        rightImageView.contentMode = .scaleAspectFill
-        rightImageView.clipsToBounds = true
-        view.addSubview(rightImageView)
+        // --- Preload models ---
+        preloadModel(named: "gun")
+        preloadModel(named: "table")
+
+        // --- Metal setup for GPU-accelerated camera passthrough ---
+        setupMetal()
+
+        // --- Metal views for camera passthrough ---
+        leftMetalView = MTKView(frame: .zero, device: metalDevice)
+        leftMetalView.delegate = self
+        leftMetalView.framebufferOnly = true  // Set to true to reduce memory pressure
+        leftMetalView.colorPixelFormat = .bgra8Unorm
+        leftMetalView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        leftMetalView.isPaused = false
+        leftMetalView.enableSetNeedsDisplay = false
+        leftMetalView.preferredFramesPerSecond = 60  // Match AR frame rate
+        view.addSubview(leftMetalView)
+
+        rightMetalView = MTKView(frame: .zero, device: metalDevice)
+        rightMetalView.delegate = self
+        rightMetalView.framebufferOnly = true  // Set to true to reduce memory pressure
+        rightMetalView.colorPixelFormat = .bgra8Unorm
+        rightMetalView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        rightMetalView.isPaused = false
+        rightMetalView.enableSetNeedsDisplay = false
+        rightMetalView.preferredFramesPerSecond = 60  // Match AR frame rate
+        view.addSubview(rightMetalView)
 
         // --- SceneKit views for stereo 3D content ---
         leftSCNView = SCNView()
@@ -125,14 +160,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         baseCameraNode.addChildNode(rightEye)
         scene.rootNode.addChildNode(baseCameraNode)
 
-        // Example 3D content (box in front) – replace with your AR content
-        let boxGeometry = SCNBox(width: 0.1, height: 0.1, length: 0.1, chamferRadius: 0.0)
-        let material = SCNMaterial()
-        material.diffuse.contents = UIColor.blue
-        boxGeometry.materials = [material]
-        let boxNode = SCNNode(geometry: boxGeometry)
-        boxNode.position = SCNVector3(0, 0, -0.5)
-        scene.rootNode.addChildNode(boxNode)
+        // Add lighting to the scene
+        setupSceneLighting()
+
+        // Gun model will be added when anchor is loaded via session(_:didAdd:)
 
         // Attach left/right eyes to SceneKit views
         leftSCNView.pointOfView = leftEye
@@ -163,13 +194,13 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         let width = view.bounds.width / 2
         let height = view.bounds.height
 
-        // Left/right halves for camera images
-        leftImageView.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        rightImageView.frame = CGRect(x: width, y: 0, width: width, height: height)
+        // Left/right halves for camera images (Metal views)
+        leftMetalView.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        rightMetalView.frame = CGRect(x: width, y: 0, width: width, height: height)
 
-        // SceneKit views sit on top of the images
-        leftSCNView.frame = leftImageView.frame
-        rightSCNView.frame = rightImageView.frame
+        // SceneKit views sit on top of the Metal views
+        leftSCNView.frame = leftMetalView.frame
+        rightSCNView.frame = rightMetalView.frame
 
         // Cardboard mask covers whole screen
         maskView.frame = view.bounds
@@ -185,72 +216,153 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         session.pause()
     }
 
-    // Keep camera aligned to ARKit head pose + update stereo camera images
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    // Keep camera aligned to ARKit head pose + store pixel buffer for GPU rendering
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        print("StereoARViewController didUpdate session =", session)
         // Update head position immediately (fast)
         baseCameraNode.simdTransform = frame.camera.transform
 
-        // Skip frame if still processing previous one
-        if isProcessingFrame { return }
-        isProcessingFrame = true
+        // Store pixel buffer reference for Metal rendering
+        // IMPORTANT: We only store the pixel buffer, not the frame itself,
+        // to avoid retaining ARFrames. The pixel buffer is released after each draw.
+        frameLock.lock()
+        currentPixelBuffer = frame.capturedImage
+        frameLock.unlock()
+    }
 
-        // Copy out orientation & viewport info
-        let interfaceOrientation = view.window?.windowScene?.interfaceOrientation ?? .landscapeRight
-        let viewportSize = view.bounds.size
-        let stereoOffset = self.stereoOffset
-        let cameraImageScale = self.cameraImageScale
+    // Restore models when anchors are loaded from world map
+    func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        for anchor in anchors where anchor.name?.hasPrefix("placedAsset_") == true {
+            // Parse asset type from anchor name (e.g., "placedAsset_gun" -> "gun")
+            let components = anchor.name?.split(separator: "_") ?? []
+            let assetName = components.count > 1 ? String(components[1]) : "gun"
 
-        // Do ALL work with the frame's pixel buffer synchronously inside this method
-        autoreleasepool {
-            let pixelBuffer = frame.capturedImage
-            var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            print("Found saved \(assetName) anchor in stereo mode, restoring model...")
 
-            // Apply proper orientation transform using ARKit's displayTransform
-            let displayTransform = frame.displayTransform(for: interfaceOrientation, viewportSize: viewportSize)
-            ciImage = ciImage.transformed(by: displayTransform)
+            // Clone and place the model
+            if let modelNode = modelTemplates[assetName]?.clone() {
+                // Position slightly above the anchor (match ARCoordinator)
+                modelNode.position = SCNVector3(0, 0.01, 0)
 
-            let imageWidth = ciImage.extent.width
-            let imageHeight = ciImage.extent.height
+                // Create a container node at the anchor's transform
+                let containerNode = SCNNode()
+                containerNode.simdTransform = anchor.transform
+                containerNode.addChildNode(modelNode)
 
-            // Horizontal stereo offset in pixels
-            let offsetPixels = imageWidth * stereoOffset
+                // Add to scene
+                scene.rootNode.addChildNode(containerNode)
+                placedNodes.append(containerNode)
 
-            // Left eye: sees more of the LEFT side of the image
-            let leftCropRect = CGRect(
-                x: 0,
-                y: 0,
-                width: imageWidth - offsetPixels,
-                height: imageHeight
-            )
-            let leftImage = ciImage.cropped(to: leftCropRect)
+                print("\(assetName) model restored at saved position in stereo mode")
+            } else {
+                print("Warning: \(assetName) model template not loaded, cannot restore anchor")
+            }
+        }
+    }
 
-            // Right eye: sees more of the RIGHT side of the image
-            let rightCropRect = CGRect(
-                x: offsetPixels,
-                y: 0,
-                width: imageWidth - offsetPixels,
-                height: imageHeight
-            )
-            let rightImage = ciImage.cropped(to: rightCropRect)
+    // MARK: - Gun Model and World Map Loading
 
-            // Convert to CGImages using reusable context
-            guard let leftCGImage = ciContext.createCGImage(leftImage, from: leftImage.extent),
-                  let rightCGImage = ciContext.createCGImage(rightImage, from: rightImage.extent) else {
-                isProcessingFrame = false
-                return
+    private func setupSceneLighting() {
+        // Add ambient light for overall illumination
+        let ambientLight = SCNNode()
+        ambientLight.light = SCNLight()
+        ambientLight.light?.type = .ambient
+        ambientLight.light?.color = UIColor(white: 0.6, alpha: 1.0)
+        scene.rootNode.addChildNode(ambientLight)
+
+        // Add directional light for definition
+        let directionalLight = SCNNode()
+        directionalLight.light = SCNLight()
+        directionalLight.light?.type = .directional
+        directionalLight.light?.color = UIColor(white: 0.8, alpha: 1.0)
+        directionalLight.eulerAngles = SCNVector3(-Float.pi / 4, Float.pi / 4, 0)
+        scene.rootNode.addChildNode(directionalLight)
+
+        // Enable automatic lighting for better material rendering
+        leftSCNView.autoenablesDefaultLighting = true
+        rightSCNView.autoenablesDefaultLighting = true
+    }
+
+    private func preloadModel(named assetName: String) {
+        guard let url = Bundle.main.url(forResource: assetName, withExtension: "usdz") else {
+            print("" + assetName + " model not found in bundle")
+            return
+        }
+
+        // Load USDZ and convert to SCNNode
+        do {
+            let loadedScene = try SCNScene(url: url, options: nil)
+
+            // Get the root node that contains the model
+            let modelNode = SCNNode()
+            for child in loadedScene.rootNode.childNodes {
+                modelNode.addChildNode(child.clone())
             }
 
-            let leftUIImage = UIImage(cgImage: leftCGImage, scale: cameraImageScale, orientation: .up)
-            let rightUIImage = UIImage(cgImage: rightCGImage, scale: cameraImageScale, orientation: .up)
+            // Scale the model to match ARCoordinator's sizing
+            let targetWidth: Float = 0.18
+            let bounds = modelNode.boundingBox
+            let size = SCNVector3(
+                bounds.max.x - bounds.min.x,
+                bounds.max.y - bounds.min.y,
+                bounds.max.z - bounds.min.z
+            )
+            let currentWidth = max(size.x, size.z)
+            if currentWidth > 0 {
+                let scale = targetWidth / currentWidth
+                modelNode.scale = SCNVector3(scale, scale, scale)
+            }
 
-            // Update on main thread (we're already on main, but keep this to be explicit)
-            DispatchQueue.main.async { [weak self] in
+            // Rotate to lay flat (match ARCoordinator's layFlat) only if not a table
+            if assetName != "table" {
+                let rotation = SCNMatrix4MakeRotation(-.pi / 2, 1, 0, 0)
+                modelNode.transform = SCNMatrix4Mult(rotation, modelNode.transform)
+            }
+
+            modelTemplates[assetName] = modelNode
+            print("" + assetName + " model loaded successfully for stereo mode")
+        } catch {
+            print("Failed to load " + assetName + " model:", error)
+        }
+    }
+
+    @objc private func handleLoadWorldMap(_ notification: Notification) {
+        let roomId = (notification.userInfo?["roomId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveId = roomId?.isEmpty == false ? roomId! : "default"
+
+        do {
+            let map = try WorldMapStore.load(roomId: effectiveId)
+            let cfg = ARWorldTrackingConfiguration()
+            cfg.planeDetection = [.horizontal]
+
+            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+                cfg.sceneReconstruction = .mesh
+            }
+            if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+                cfg.frameSemantics.insert(.sceneDepth)
+            }
+            if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
+                cfg.frameSemantics.insert(.personSegmentationWithDepth)
+            } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentation) {
+                cfg.frameSemantics.insert(.personSegmentation)
+            }
+
+            cfg.initialWorldMap = map
+
+            // Pause first to avoid "already-enabled session" warning
+            session.pause()
+
+            // Small delay to ensure session is fully paused
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 guard let self = self else { return }
-                self.leftImageView.image = leftUIImage
-                self.rightImageView.image = rightUIImage
-                self.isProcessingFrame = false
+                self.session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
+                print("Loaded world map for \(effectiveId) in stereo mode. Anchors will appear in session(_:didAdd:)")
             }
+        } catch {
+            print("Failed to load world map in stereo mode:", error)
         }
     }
 
@@ -387,5 +499,142 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     func apply(config newConfig: StereoConfig) {
         config = newConfig
+    }
+
+    // MARK: - Metal Setup
+
+    private func setupMetal() {
+        // Get Metal device
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            fatalError("Metal is not supported on this device")
+        }
+        metalDevice = device
+        commandQueue = device.makeCommandQueue()!
+
+        // Create texture cache for CVPixelBuffer -> MTLTexture conversion
+        var textureCache: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
+        self.textureCache = textureCache!
+
+        // Create sampler state
+        let samplerDescriptor = MTLSamplerDescriptor()
+        samplerDescriptor.minFilter = .linear
+        samplerDescriptor.magFilter = .linear
+        samplerDescriptor.sAddressMode = .clampToEdge
+        samplerDescriptor.tAddressMode = .clampToEdge
+        sampler = device.makeSamplerState(descriptor: samplerDescriptor)!
+
+        // Create render pipeline
+        let library = device.makeDefaultLibrary()!
+        let vertexFunction = library.makeFunction(name: "stereoPassthroughVertex")!
+        let fragmentFunction = library.makeFunction(name: "stereoPassthroughFragment")!
+
+        let pipelineDescriptor = MTLRenderPipelineDescriptor()
+        pipelineDescriptor.vertexFunction = vertexFunction
+        pipelineDescriptor.fragmentFunction = fragmentFunction
+        pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+
+        pipelineState = try! device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+    }
+
+    private func createTexture(from pixelBuffer: CVPixelBuffer, planeIndex: Int) -> MTLTexture? {
+        let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, planeIndex)
+        let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, planeIndex)
+
+        let format: MTLPixelFormat = planeIndex == 0 ? .r8Unorm : .rg8Unorm
+
+        var textureRef: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            nil,
+            textureCache,
+            pixelBuffer,
+            nil,
+            format,
+            width,
+            height,
+            planeIndex,
+            &textureRef
+        )
+
+        guard status == kCVReturnSuccess, let textureRef = textureRef else {
+            return nil
+        }
+
+        return CVMetalTextureGetTexture(textureRef)
+    }
+}
+
+// MARK: - MTKViewDelegate
+
+extension StereoARViewController: MTKViewDelegate {
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // Handle size change if needed
+    }
+
+    func draw(in view: MTKView) {
+        // Get the current pixel buffer
+        frameLock.lock()
+        guard let pixelBuffer = currentPixelBuffer else {
+            frameLock.unlock()
+            return
+        }
+        // Don't clear currentPixelBuffer here - we'll use it for both eyes
+        frameLock.unlock()
+
+        // Create textures from pixel buffer (YCbCr format from camera)
+        guard let yTexture = createTexture(from: pixelBuffer, planeIndex: 0),
+              let cbcrTexture = createTexture(from: pixelBuffer, planeIndex: 1) else {
+            return
+        }
+
+        guard let drawable = view.currentDrawable,
+              let renderPassDescriptor = view.currentRenderPassDescriptor,
+              let commandBuffer = commandQueue.makeCommandBuffer() else {
+            return
+        }
+
+        // Add completion handler to flush texture cache periodically
+        commandBuffer.addCompletedHandler { [weak self] _ in
+            guard let self = self else { return }
+            // Flush texture cache every few frames to release old textures
+            self.frameCounter += 1
+            if self.frameCounter % 3 == 0 {
+                CVMetalTextureCacheFlush(self.textureCache, 0)
+            }
+        }
+
+        // Determine if this is left or right eye
+        let isLeftEye = (view === leftMetalView)
+        let stereoOffsetValue = Float(stereoOffset)
+
+        // Create vertex data for a full-screen quad with stereo offset
+        // The offset shifts the UV coordinates to create the stereo effect
+        let leftOffset: Float = isLeftEye ? 0.0 : stereoOffsetValue
+        let rightOffset: Float = isLeftEye ? stereoOffsetValue : 0.0
+
+        // Vertices: position (x, y) and texCoord (u, v)
+        // For landscape right orientation with front camera mirroring
+        let vertices: [Float] = [
+            // Position      // TexCoord (with stereo offset and orientation)
+            -1.0, -1.0,      leftOffset, 1.0,
+             1.0, -1.0,      1.0 - rightOffset, 1.0,
+            -1.0,  1.0,      leftOffset, 0.0,
+             1.0,  1.0,      1.0 - rightOffset, 0.0,
+        ]
+
+        guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            return
+        }
+
+        renderEncoder.setRenderPipelineState(pipelineState)
+        renderEncoder.setVertexBytes(vertices, length: vertices.count * MemoryLayout<Float>.size, index: 0)
+        renderEncoder.setFragmentTexture(yTexture, index: 0)
+        renderEncoder.setFragmentTexture(cbcrTexture, index: 1)
+        renderEncoder.setFragmentSamplerState(sampler, index: 0)
+        renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        renderEncoder.endEncoding()
+
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
     }
 }

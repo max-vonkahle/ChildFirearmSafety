@@ -38,12 +38,13 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     // SwiftUI-mirrored state
     var isArmed: Bool = false
     var lastClearTick: Int = 0
+    var selectedAsset: String? = nil
 
     // Entities / Anchors
-    private var modelRoot: Entity?
-    private var placedAnchor: AnchorEntity?
-    private var placedARAnchor: ARAnchor?
-    private let anchorName = "placedAsset"
+    private var modelRoots: [String: Entity] = [:]
+    private var placedAnchors: [AnchorEntity] = []
+    private var placedARAnchors: [ARAnchor] = []
+    private var currentAsset: String? = nil
 
     // Subscriptions / requests
     private var cancellable: AnyCancellable?
@@ -116,8 +117,8 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             Task { @MainActor [weak self] in
                 do {
                     let entity = try await Entity(contentsOf: url)
-                    self?.modelRoot = entity
-                    self?.scaleToFit(entity, targetWidthMeters: 0.18)
+                    self?.modelRoots[name] = entity
+                    self?.scaleToFit(entity, targetWidthMeters: 0.18, objectType: name)
                 } catch {
                     print("Model load error:", error)
                 }
@@ -128,8 +129,8 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 .sink(receiveCompletion: { comp in
                     if case let .failure(err) = comp { print("Model load error:", err) }
                 }, receiveValue: { [weak self] entity in
-                    self?.modelRoot = entity
-                    self?.scaleToFit(entity, targetWidthMeters: 0.18)
+                    self?.modelRoots[name] = entity
+                    self?.scaleToFit(entity, targetWidthMeters: 0.18, objectType: name)
                 })
         }
     }
@@ -150,7 +151,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
         guard let arView = arView,
               let frame = arView.session.currentFrame,
-              placedAnchor != nil,
+              !placedAnchors.isEmpty,  // Check if any anchors are placed
               warningShown == false
         else { return }
 
@@ -234,39 +235,55 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
 
         let location = sender.location(in: arView)
-        guard let ray = arView.raycast(from: location, allowing: .estimatedPlane, alignment: .horizontal).first else {
+
+        // Try to hit test against entities first (like table tops)
+        var targetTransform: simd_float4x4?
+
+        // Cast ray against all entities with collision shapes
+        let hitResults = arView.hitTest(location, query: .nearest)
+        if let result = hitResults.first {
+            // We hit an entity - create transform at the hit position
+            let hitPosition = result.position
+
+            // Create a transform matrix at the hit position, maintaining world up orientation
+            var transform = matrix_identity_float4x4
+            transform.columns.3 = SIMD4<Float>(hitPosition.x, hitPosition.y, hitPosition.z, 1.0)
+
+            targetTransform = transform
+        }
+
+        // If we didn't hit an entity, try ARKit plane detection
+        if targetTransform == nil {
+            let planeQuery = arView.raycast(from: location, allowing: .estimatedPlane, alignment: .horizontal)
+            if let ray = planeQuery.first {
+                targetTransform = ray.worldTransform
+            }
+        }
+
+        guard let transform = targetTransform else {
             return
         }
 
-        if let entityAnchor = placedAnchor {
-            // Move existing visual
-            entityAnchor.transform = Transform(matrix: ray.worldTransform)
-
-            // Replace the ARAnchor so the saved transform matches the new pose
-            if let old = placedARAnchor { arView.session.remove(anchor: old) }
-            let newAR = ARAnchor(name: anchorName, transform: ray.worldTransform)
-            arView.session.add(anchor: newAR)
-            placedARAnchor = newAR
-
-            isArmed = false
-            onDisarm?()
-            return
-        }
-
-        // First placement
-        if let root = modelRoot?.clone(recursive: true) {
-            layFlat(root)
+        // Place new asset
+        let asset = selectedAsset ?? "gun"
+        if let root = modelRoots[asset]?.clone(recursive: true) {
+            layFlat(root, objectType: asset)
             root.position = [0, 0.01, 0]
 
-            let entityAnchor = AnchorEntity(world: ray.worldTransform)
+            // Enable collision for tables so other objects can be placed on them
+            if asset == "table" {
+                root.generateCollisionShapes(recursive: true)
+            }
+
+            let entityAnchor = AnchorEntity(world: transform)
             entityAnchor.addChild(root)
             arView.scene.addAnchor(entityAnchor)
-            placedAnchor = entityAnchor
+            placedAnchors.append(entityAnchor)
 
             // Create the ARAnchor that will be serialized into the world map
-            let arAnchor = ARAnchor(name: anchorName, transform: ray.worldTransform)
+            let arAnchor = ARAnchor(name: "placedAsset_\(asset)", transform: transform)
             arView.session.add(anchor: arAnchor)
-            placedARAnchor = arAnchor
+            placedARAnchors.append(arAnchor)
 
             warningShown = false
             isArmed = false
@@ -330,27 +347,33 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
         guard let arView = arView else { return }
-        for a in anchors where a.name == anchorName {
-            // Rebuild the visual for this anchor
-            placedARAnchor = a
+        for a in anchors where a.name?.hasPrefix("placedAsset_") == true {
+            // Parse asset type
+            let components = a.name?.split(separator: "_") ?? []
+            let asset = components.count > 1 ? String(components[1]) : "gun"
 
-            // Remove any old visual anchor
-            if let old = placedAnchor {
-                arView.scene.removeAnchor(old)
-                placedAnchor = nil
-            }
+            // Add to our tracked AR anchors
+            placedARAnchors.append(a)
 
             // Spawn the model at the saved transform
-            if let model = modelRoot?.clone(recursive: true) {
-                layFlat(model)
+            if let model = modelRoots[asset]?.clone(recursive: true) {
+                layFlat(model, objectType: asset)
                 model.position = [0, 0.01, 0]
+
+                // Enable collision for tables so other objects can be placed on them
+                if asset == "table" {
+                    model.generateCollisionShapes(recursive: true)
+                }
+
                 let entityAnchor = AnchorEntity(world: a.transform)
                 entityAnchor.addChild(model)
                 arView.scene.addAnchor(entityAnchor)
-                placedAnchor = entityAnchor
+                placedAnchors.append(entityAnchor)
 
                 // Allow future warnings again
                 warningShown = false
+
+                print("Restored \(asset) at saved position")
             }
         }
     }
@@ -365,27 +388,46 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     // MARK: - Helpers
 
     /// Rotate −90° around X so the model lies on a horizontal surface.
-    func layFlat(_ e: Entity) {
+    func layFlat(_ e: Entity, objectType: String? = nil) {
+        // Skip laying flat for the table
+        if objectType == "table" {
+            return
+        }
         let q = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
         e.orientation = q * e.orientation
     }
 
-    /// Uniformly scale the entity to a target width (XZ max) in meters.
-    func scaleToFit(_ entity: Entity?, targetWidthMeters: Float = 0.18) {
+    func scaleToFit(_ entity: Entity?, targetWidthMeters: Float = 0.18, objectType: String) {
         guard let e = entity else { return }
         let b = e.visualBounds(relativeTo: nil)
         let size = b.extents
         let currentWidth = max(size.x, size.z)
         guard currentWidth > 0 else { return }
-        let factor = targetWidthMeters / currentWidth
+        
+        // Use different target sizes for different objects
+        let targetSize: Float
+        if objectType == "table" {
+            targetSize = 1.0 // Larger size for tables
+        } else {
+            targetSize = targetWidthMeters // Default size for other objects
+        }
+        
+        let factor = targetSize / currentWidth
         e.scale *= SIMD3<Float>(repeating: factor)
     }
 
-    /// Compute the gun’s screen-space bounding rect (with padding).
+
+    /// Compute the gun's screen-space bounding rect (with padding).
+    /// Only looks for gun anchors (not tables or other objects).
     func gunScreenRect() -> CGRect? {
-        guard let arView = arView,
-              let anchor = placedAnchor,
-              let model = anchor.children.first else { return nil }
+        guard let arView = arView else { return nil }
+
+        // Find the first gun anchor (check AR anchors to get the asset type)
+        guard let gunIndex = placedARAnchors.firstIndex(where: { $0.name?.contains("_gun") == true }),
+              gunIndex < placedAnchors.count else { return nil }
+
+        let anchor = placedAnchors[gunIndex]
+        guard let model = anchor.children.first else { return nil }
 
         let b = model.visualBounds(relativeTo: nil)
         let c = b.center
@@ -415,9 +457,14 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     func projectedGunScreenPoint() -> CGPoint? {
-        guard let arView = arView,
-              let anchor = placedAnchor,
-              let model = anchor.children.first else { return nil }
+        guard let arView = arView else { return nil }
+
+        // Find the first gun anchor
+        guard let gunIndex = placedARAnchors.firstIndex(where: { $0.name?.contains("_gun") == true }),
+              gunIndex < placedAnchors.count else { return nil }
+
+        let anchor = placedAnchors[gunIndex]
+        guard let model = anchor.children.first else { return nil }
         let bounds = model.visualBounds(relativeTo: nil)
         let centerWorld = bounds.center
         return arView.project(centerWorld)
@@ -441,7 +488,12 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     func gunDistanceFromCamera(frame: ARFrame) -> Float? {
-        guard let anchor = placedAnchor, let model = anchor.children.first else { return nil }
+        // Find the first gun anchor
+        guard let gunIndex = placedARAnchors.firstIndex(where: { $0.name?.contains("_gun") == true }),
+              gunIndex < placedAnchors.count else { return nil }
+
+        let anchor = placedAnchors[gunIndex]
+        guard let model = anchor.children.first else { return nil }
         let world = model.position(relativeTo: nil)
         let cam = frame.camera.transform
         let rel = cam.inverse * SIMD4<Float>(world.x, world.y, world.z, 1)
@@ -468,8 +520,27 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     func setGunVisible(_ visible: Bool) {
         if visible { return } // v1 only supports hiding; showing would require re-anchoring
-        if let anchor = placedAnchor { arView?.scene.removeAnchor(anchor); placedAnchor = nil }
-        if let ar = placedARAnchor { arView?.session.remove(anchor: ar); placedARAnchor = nil }
+
+        // Find and remove only gun anchors
+        var indicesToRemove: [Int] = []
+        for (index, arAnchor) in placedARAnchors.enumerated() {
+            if arAnchor.name?.contains("_gun") == true {
+                indicesToRemove.append(index)
+            }
+        }
+
+        // Remove in reverse order to maintain correct indices
+        for index in indicesToRemove.reversed() {
+            if index < placedAnchors.count {
+                arView?.scene.removeAnchor(placedAnchors[index])
+                placedAnchors.remove(at: index)
+            }
+            if index < placedARAnchors.count {
+                arView?.session.remove(anchor: placedARAnchors[index])
+                placedARAnchors.remove(at: index)
+            }
+        }
+
         warningShown = false
     }
 
@@ -484,14 +555,19 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
 
-    func clearGun() {
-        if let anchor = placedAnchor {
+    func clearAsset() {
+        // Remove all visual anchors
+        for anchor in placedAnchors {
             arView?.scene.removeAnchor(anchor)
-            placedAnchor = nil
         }
-        if let ar = placedARAnchor {
+        placedAnchors.removeAll()
+
+        // Remove all AR anchors
+        for ar in placedARAnchors {
             arView?.session.remove(anchor: ar)
-            placedARAnchor = nil
         }
+        placedARAnchors.removeAll()
+
+        currentAsset = nil
     }
 }

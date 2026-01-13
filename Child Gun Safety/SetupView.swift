@@ -15,6 +15,7 @@ struct SetupView: View {
     // Create mode state
     @State private var isArmed = false
     @State private var clearTick = 0
+    @State private var selectedAsset: String? = nil
 
     // Save popup (Create mode)
     @State private var showSaveSheet = false
@@ -53,6 +54,7 @@ struct SetupView: View {
                     ARSceneView(
                         isArmed: $isArmed,
                         clearTick: $clearTick,
+                        selectedAsset: $selectedAsset,
                         onDisarm: { isArmed = false },
                         onSceneAppear: handleSceneAppear,
                         onSceneTap: handleSceneTap,
@@ -120,13 +122,20 @@ struct SetupView: View {
                         .cornerRadius(12)
                 }
 
-                Button {
-                    isArmed.toggle()
+                Menu {
+                    Button("Place Table") {
+                        selectedAsset = "table"
+                        isArmed = true
+                    }
+                    Button("Place Gun") {
+                        selectedAsset = "gun"
+                        isArmed = true
+                    }
                 } label: {
-                    Label(isArmed ? "Tap to Place…" : "Place",
-                          systemImage: isArmed ? "hand.point.up.left" : "plus.circle")
+                    Label("Place",
+                          systemImage: "plus.circle")
                         .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(isArmed ? Color.yellow.opacity(0.3) : Color.blue.opacity(0.25))
+                        .background(Color.blue.opacity(0.25))
                         .cornerRadius(12)
                 }
 

@@ -8,9 +8,24 @@ import ARKit
 import UIKit
 
 struct ARViewContainer: UIViewRepresentable {
-    @Binding var isArmed: Bool
-    @Binding var clearTick: Int
-    var onDisarm: () -> Void
+     @Binding var isArmed: Bool
+     @Binding var clearTick: Int
+     @Binding var selectedAsset: String?
+     var onDisarm: () -> Void
+
+     init(isArmed: Binding<Bool>,
+          clearTick: Binding<Int>,
+          selectedAssetBinding: Binding<String?>? = nil,
+          onDisarm: @escaping () -> Void) {
+         _isArmed = isArmed
+         _clearTick = clearTick
+         if let selectedAssetBinding = selectedAssetBinding {
+             _selectedAsset = selectedAssetBinding
+         } else {
+             _selectedAsset = .constant(nil)
+         }
+         self.onDisarm = onDisarm
+     }
 
     // Use your existing external coordinator type
     typealias Coordinator = ARCoordinator
@@ -38,6 +53,7 @@ struct ARViewContainer: UIViewRepresentable {
         }
 
         arView.session.run(config)
+        arView.debugOptions = []  // Disable debug visualizations like anchor cubes
         arView.session.delegate = context.coordinator
 
         // Tap gesture forwarding to coordinator
@@ -46,9 +62,10 @@ struct ARViewContainer: UIViewRepresentable {
         tap.cancelsTouchesInView = false  // Add this line to allow touches to propagate
         arView.addGestureRecognizer(tap)
 
-        // Bind coordinator to ARView and preload model
+        // Bind coordinator to ARView and preload models
         context.coordinator.bind(arView: arView, onDisarm: onDisarm)
         context.coordinator.preloadModel(named: "gun")
+        context.coordinator.preloadModel(named: "table")
         context.coordinator.startFrameUpdates()
 
         return arView
@@ -57,11 +74,12 @@ struct ARViewContainer: UIViewRepresentable {
     func updateUIView(_ uiView: ARView, context: Context) {
         // Sync coordinator with SwiftUI state
         context.coordinator.isArmed = isArmed
+        context.coordinator.selectedAsset = selectedAsset
 
         // Trigger clear when clearTick changes
         if context.coordinator.lastClearTick != clearTick {
             context.coordinator.lastClearTick = clearTick
-            context.coordinator.clearGun()
+            context.coordinator.clearAsset()
             // Allow future warnings after clearing
             context.coordinator.warningShown = false
         }

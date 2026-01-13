@@ -76,6 +76,18 @@ struct SettingsView: View {
     @State private var apiKey: String = UserDefaults.standard.string(forKey: "gemini_api_key") ?? ""
     @AppStorage("cardboardMode") private var cardboardMode = false
     @State private var saved = false
+    @State private var systemPrompt: String = UserDefaults.standard.string(forKey: "systemPrompt") ?? """
+    You are a child‑safety coach guiding a young learner to stay safe if they find a firearm.
+
+    Core rules that you are trying to instill in them:
+    • Don't touch it. • Run away. • Tell a trusted adult.
+
+    Your are guiding them through a behavioral skills training where they will see a gun.
+    You want to teach them the core rules, then have them repeat them as well as act them out.
+
+    Your objective is to help the child learn: don't touch it, run away, and tell a trusted adult.
+    """
+    @State private var savedPrompt = false
 
     var body: some View {
         Form {
@@ -120,10 +132,39 @@ struct SettingsView: View {
             Section(footer: Text("Your key is stored locally on this device. You can remove it anytime by clearing the text and tapping Save.")) {
                 EmptyView()
             }
+
+            Section(header: Text("System Prompt")) {
+                TextEditor(text: $systemPrompt)
+                    .frame(minHeight: 200)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+
+                HStack {
+                    Button("Save") {
+                        let trimmed = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                        UserDefaults.standard.set(trimmed, forKey: "systemPrompt")
+                        savedPrompt = true
+                        // Provide a subtle success haptic on save
+                        #if canImport(UIKit)
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        #endif
+                    }
+                    .disabled(systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Spacer()
+                }
+                if savedPrompt {
+                    Label("Saved", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.footnote)
+                }
+            }
         }
         .navigationTitle("Settings")
         .onChange(of: apiKey) { _, _ in
             saved = false
+        }
+        .onChange(of: systemPrompt) { _, _ in
+            savedPrompt = false
         }
     }
 }
