@@ -10,6 +10,7 @@
 		50598A1B2EA5DFF100C328BD /* FirebaseAI in Frameworks */ = {isa = PBXBuildFile; productRef = 50598A1A2EA5DFF100C328BD /* FirebaseAI */; };
 		50598A1D2EA5DFF100C328BD /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 50598A1C2EA5DFF100C328BD /* FirebaseAnalytics */; };
 		50598A1F2EA5DFF100C328BD /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = 50598A1E2EA5DFF100C328BD /* FirebaseAnalyticsCore */; };
+		507F0DF22F16FBF700BC3945 /* FirebaseAILogic in Frameworks */ = {isa = PBXBuildFile; productRef = 507F0DF12F16FBF700BC3945 /* FirebaseAILogic */; };
 		50D8C5272E8355A600F906DF /* Secrets.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 50D8C5262E8355A600F906DF /* Secrets.xcconfig */; };
 /* End PBXBuildFile section */
 
@@ -60,6 +61,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				507F0DF22F16FBF700BC3945 /* FirebaseAILogic in Frameworks */,
 				50598A1D2EA5DFF100C328BD /* FirebaseAnalytics in Frameworks */,
 				50598A1F2EA5DFF100C328BD /* FirebaseAnalyticsCore in Frameworks */,
 				50598A1B2EA5DFF100C328BD /* FirebaseAI in Frameworks */,
@@ -127,6 +129,7 @@
 				50598A1A2EA5DFF100C328BD /* FirebaseAI */,
 				50598A1C2EA5DFF100C328BD /* FirebaseAnalytics */,
 				50598A1E2EA5DFF100C328BD /* FirebaseAnalyticsCore */,
+				507F0DF12F16FBF700BC3945 /* FirebaseAILogic */,
 			);
 			productName = "Child Gun Safety";
 			productReference = 50D8C4F32E81FC6400F906DF /* Child Gun Safety.app */;
@@ -618,6 +621,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 50598A192EA5DFF100C328BD /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAnalyticsCore;
+		};
+		507F0DF12F16FBF700BC3945 /* FirebaseAILogic */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 50598A192EA5DFF100C328BD /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAILogic;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

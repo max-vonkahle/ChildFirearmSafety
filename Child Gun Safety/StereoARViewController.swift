@@ -261,27 +261,15 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 print("Warning: \(assetName) model template not loaded, cannot restore anchor")
             }
         }
+
+        // Notify that assets are configured (matching ARCoordinator behavior)
+        NotificationCenter.default.post(name: .assetsConfigured, object: nil)
     }
 
     // MARK: - Gun Model and World Map Loading
 
     private func setupSceneLighting() {
-        // Add ambient light for overall illumination
-        let ambientLight = SCNNode()
-        ambientLight.light = SCNLight()
-        ambientLight.light?.type = .ambient
-        ambientLight.light?.color = UIColor(white: 0.6, alpha: 1.0)
-        scene.rootNode.addChildNode(ambientLight)
-
-        // Add directional light for definition
-        let directionalLight = SCNNode()
-        directionalLight.light = SCNLight()
-        directionalLight.light?.type = .directional
-        directionalLight.light?.color = UIColor(white: 0.8, alpha: 1.0)
-        directionalLight.eulerAngles = SCNVector3(-Float.pi / 4, Float.pi / 4, 0)
-        scene.rootNode.addChildNode(directionalLight)
-
-        // Enable automatic lighting for better material rendering
+        // Enable automatic default lighting to match RealityKit's behavior in regular AR view
         leftSCNView.autoenablesDefaultLighting = true
         rightSCNView.autoenablesDefaultLighting = true
     }
@@ -303,7 +291,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             }
 
             // Scale the model to match ARCoordinator's sizing
-            let targetWidth: Float = 0.18
+            let targetWidth: Float = assetName == "table" ? 1.0 : 0.18
             let bounds = modelNode.boundingBox
             let size = SCNVector3(
                 bounds.max.x - bounds.min.x,
@@ -318,6 +306,11 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
             // Rotate to lay flat (match ARCoordinator's layFlat) only if not a table
             if assetName != "table" {
+                let rotation = SCNMatrix4MakeRotation(-.pi / 2, 1, 0, 0)
+                modelNode.transform = SCNMatrix4Mult(rotation, modelNode.transform)
+            }
+            // Rotate table to lay flat in stereo mode
+            if assetName == "table" {
                 let rotation = SCNMatrix4MakeRotation(-.pi / 2, 1, 0, 0)
                 modelNode.transform = SCNMatrix4Mult(rotation, modelNode.transform)
             }

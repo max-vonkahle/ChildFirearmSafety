@@ -27,6 +27,7 @@ import UIKit
 extension Notification.Name {
     static let saveWorldMap = Notification.Name("SaveWorldMap")
     static let loadWorldMap = Notification.Name("LoadWorldMap")
+    static let assetsConfigured = Notification.Name("AssetsConfigured")
 }
 
 
@@ -376,6 +377,8 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 print("Restored \(asset) at saved position")
             }
         }
+        // Notify that assets are configured
+        NotificationCenter.default.post(name: .assetsConfigured, object: nil)
     }
 
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {

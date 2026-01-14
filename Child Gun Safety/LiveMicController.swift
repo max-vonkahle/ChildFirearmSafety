@@ -2,7 +2,7 @@
 //  LiveMicController.swift
 //  Child Gun Safety
 //
-//  Captures microphone audio and resamples to 16-bit PCM mono @ 16 kHz
+//  Captures microphone audio and resamples to 16-bit PCM mono @ 24 kHz
 //  for streaming into GeminiFlashLiveClient.
 //
 
@@ -26,14 +26,14 @@ final class LiveMicController {
     /// Optional callbacks for UI state.
     var onSpeechStart: (() -> Void)?
     var onSpeechEnd: (() -> Void)?
-    
+
     // MARK: - Private state
 
     private let engine = AVAudioEngine()
     private var isRunning = false
 
-    /// Target sample rate for Gemini Live audio input (16 kHz per Live API docs).
-    private let targetSampleRate: Double = 16_000
+    /// Target sample rate for Gemini Live audio input (24 kHz for native audio API).
+    private let targetSampleRate: Double = 24_000
     private let rmsLogFloor: Float = -60.0
 
     private var currentClient: GeminiFlashLiveClient?
@@ -129,7 +129,7 @@ final class LiveMicController {
             options: [.defaultToSpeaker, .allowBluetooth]
         )
 
-        // Ask for 16 kHz if possible
+        // Ask for 24 kHz if possible
         try session.setPreferredSampleRate(targetSampleRate)
 
         try session.setActive(true, options: [])
@@ -139,7 +139,7 @@ final class LiveMicController {
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
 
-        // Create target format: 16-bit PCM mono @ 16 kHz
+        // Create target format: 16-bit PCM mono @ 24 kHz
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
             sampleRate: targetSampleRate,
@@ -181,7 +181,7 @@ final class LiveMicController {
 
     // MARK: - Buffer processing
 
-    /// Resample and convert the buffer to 16-bit mono @ 16k, then stream.
+    /// Resample and convert the buffer to 16-bit mono @ 24k, then stream.
     private func process(
         buffer: AVAudioPCMBuffer,
         converter: AVAudioConverter,

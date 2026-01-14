@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import FirebaseAI
+import FirebaseAILogic
 
 @MainActor
 final class GeminiFlashLiveStreamHandle {
@@ -71,10 +71,10 @@ final class GeminiFlashLiveClient {
 
     private var currentHandlers: Handlers?
     private var pendingAudio = Data()
-    private var pendingSampleRate: Double = 16_000
+    private var pendingSampleRate: Double = 24_000
 
     init(
-        modelName: String = "gemini-live-2.5-flash-preview",
+        modelName: String = "gemini-2.5-flash-native-audio-preview-12-2025",
         voiceName: String = "Puck",
         temperature: Float = 0.2,
         systemInstruction: String? = nil
@@ -177,7 +177,7 @@ final class GeminiFlashLiveClient {
 
             currentHandlers = handlers
             pendingAudio.removeAll(keepingCapacity: false)
-            pendingSampleRate = 16_000
+            pendingSampleRate = 24_000
 
             print("✅ [Live] Audio conversation session ready (session exists: \(session != nil))")
             handlers.onOpen?()
@@ -210,7 +210,7 @@ final class GeminiFlashLiveClient {
 
             currentHandlers = handlers
             pendingAudio.removeAll(keepingCapacity: false)
-            pendingSampleRate = 16_000
+            pendingSampleRate = 24_000
 
             handlers.onOpen?()
 
