@@ -41,6 +41,12 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var maskView: UIView!
     private var reticleView: UIView!
 
+    // Occlusion overlay views (renders camera where person is detected, on top of 3D)
+    private var leftOcclusionView: MTKView!
+    private var rightOcclusionView: MTKView!
+    private var occlusionPipelineState: MTLRenderPipelineState!
+    private var currentSegmentationBuffer: CVPixelBuffer?
+
     // Current frame texture (updated each frame, rendered by MTKView)
     private var currentPixelBuffer: CVPixelBuffer?
     private let frameLock = NSLock()
@@ -53,11 +59,19 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var ipd: Float = 0.064
     // Horizontal offset as percentage of image width for stereo hack
     private let stereoOffset: CGFloat = 0.08
+    // Screen/viewport parameters for off-axis projection
+    private var screenAspect: Float = 16.0 / 9.0
+    private let zNear: Float = 0.001
+    private let zFar: Float = 100.0
+    // Zero parallax distance - objects at this distance appear at screen depth
+    // (no doubling). Objects closer appear in front, objects farther appear behind.
+    private var zeroParallaxDistance: Float = 1.0
 
     // Preserve old config hook (so existing callers still compile)
     private var config = StereoConfig() {
         didSet {
             ipd = config.ipdMeters
+            zeroParallaxDistance = config.zeroParallaxDistance
             updateEyePositions()
         }
     }
@@ -134,6 +148,31 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         rightSCNView.isPlaying = true
         view.addSubview(rightSCNView)
 
+        // --- Occlusion overlay views (on top of SceneKit, renders camera where person detected) ---
+        leftOcclusionView = MTKView(frame: .zero, device: metalDevice)
+        leftOcclusionView.delegate = self
+        leftOcclusionView.framebufferOnly = false  // Need to read for blending
+        leftOcclusionView.colorPixelFormat = .bgra8Unorm
+        leftOcclusionView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        leftOcclusionView.isPaused = false
+        leftOcclusionView.enableSetNeedsDisplay = false
+        leftOcclusionView.preferredFramesPerSecond = 60
+        leftOcclusionView.isOpaque = false  // Allow transparency
+        leftOcclusionView.layer.isOpaque = false
+        view.addSubview(leftOcclusionView)
+
+        rightOcclusionView = MTKView(frame: .zero, device: metalDevice)
+        rightOcclusionView.delegate = self
+        rightOcclusionView.framebufferOnly = false
+        rightOcclusionView.colorPixelFormat = .bgra8Unorm
+        rightOcclusionView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        rightOcclusionView.isPaused = false
+        rightOcclusionView.enableSetNeedsDisplay = false
+        rightOcclusionView.preferredFramesPerSecond = 60
+        rightOcclusionView.isOpaque = false
+        rightOcclusionView.layer.isOpaque = false
+        view.addSubview(rightOcclusionView)
+
         // --- Camera rig (head  left/right eyes) ---
         baseCameraNode.camera = SCNCamera()
         baseCameraNode.camera?.usesOrthographicProjection = false
@@ -141,19 +180,16 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         leftEye.camera = SCNCamera()
         rightEye.camera = SCNCamera()
 
-        // Match ARFun FOV / near plane
-        leftEye.camera?.fieldOfView = eyeFOV
-        rightEye.camera?.fieldOfView = eyeFOV
-        leftEye.camera?.zNear = 0.001
-        rightEye.camera?.zNear = 0.001
-
         // Turn off auto exposure / HDR
         [baseCameraNode, leftEye, rightEye].forEach {
             $0.camera?.wantsHDR = false
             $0.camera?.wantsExposureAdaptation = false
         }
 
-        // Position eyes using IPD
+        // IMPORTANT: Do NOT set fieldOfView or zNear here - we'll use custom projectionTransform
+        // Setting those properties can cause SceneKit to override our projection matrix
+
+        // Position eyes using IPD and set up off-axis projection
         updateEyePositions()
 
         baseCameraNode.addChildNode(leftEye)
@@ -182,9 +218,18 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // Initial reticle drawing
         createReticle()
 
-        // --- ARKit session setup ---
+        // --- ARKit session setup with person segmentation for occlusion ---
         session.delegate = self
         let cfg = ARWorldTrackingConfiguration()
+        cfg.planeDetection = [.horizontal]
+
+        // Enable person segmentation for occlusion
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
+            cfg.frameSemantics.insert(.personSegmentationWithDepth)
+        } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentation) {
+            cfg.frameSemantics.insert(.personSegmentation)
+        }
+
         session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
     }
 
@@ -202,6 +247,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         leftSCNView.frame = leftMetalView.frame
         rightSCNView.frame = rightMetalView.frame
 
+        // Occlusion views sit on top of SceneKit views
+        leftOcclusionView.frame = leftMetalView.frame
+        rightOcclusionView.frame = rightMetalView.frame
+
         // Cardboard mask covers whole screen
         maskView.frame = view.bounds
         createCardboardMask()
@@ -209,6 +258,9 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // Reticle overlay also covers whole screen
         reticleView.frame = view.bounds
         createReticle()
+
+        // Update off-axis projection with new aspect ratio
+        updateOffAxisProjection()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -230,6 +282,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // to avoid retaining ARFrames. The pixel buffer is released after each draw.
         frameLock.lock()
         currentPixelBuffer = frame.capturedImage
+        // Also capture the person segmentation stencil for occlusion
+        currentSegmentationBuffer = frame.segmentationBuffer
         frameLock.unlock()
     }
 
@@ -362,8 +416,126 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // MARK: - Cardboard reticle / mask (ported from ARFun)
 
     private func updateEyePositions() {
-        leftEye.position = SCNVector3(-ipd / 2, 0, 0)
-        rightEye.position = SCNVector3(ipd / 2, 0, 0)
+        // IMPORTANT: Both eyes are at the SAME position (no physical IPD offset)
+        // because the camera passthrough already has stereo baked in via UV shifting.
+        // We only shift the 3D frustum to match that UV shift.
+        leftEye.position = SCNVector3Zero
+        rightEye.position = SCNVector3Zero
+
+        // Reset any rotation - eyes look straight ahead (parallel)
+        leftEye.eulerAngles = SCNVector3Zero
+        rightEye.eulerAngles = SCNVector3Zero
+
+        // Apply shifted projection matrices to match camera passthrough
+        updateOffAxisProjection()
+    }
+
+    /// Creates a projection matrix with horizontal frustum shift to match the camera passthrough stereo.
+    ///
+    /// Since the camera passthrough shifts UV coordinates by `stereoOffset` (8%), we need to
+    /// shift the 3D projection by the same amount so virtual objects align with the background.
+    ///
+    /// - Parameters:
+    ///   - horizontalShift: Frustum shift as fraction of width (-stereoOffset for left, +stereoOffset for right)
+    ///   - aspect: Viewport aspect ratio (width/height)
+    ///   - fovY: Vertical field of view in degrees
+    ///   - near: Near clipping plane
+    ///   - far: Far clipping plane
+    /// - Returns: SCNMatrix4 projection matrix
+    private func createShiftedProjectionMatrix(
+        horizontalShift: Float,
+        aspect: Float,
+        fovY: Float,
+        near: Float,
+        far: Float
+    ) -> SCNMatrix4 {
+        // Convert FOV to radians
+        let fovYRad = fovY * .pi / 180.0
+
+        // Calculate the half-height and half-width of the near plane
+        let top = near * tan(fovYRad / 2.0)
+        let bottom = -top
+        let halfWidth = top * aspect
+
+        // The camera passthrough shifts UVs by stereoOffset (e.g., 8%)
+        // To match, we shift the frustum by the same percentage of its width
+        // horizontalShift is the fraction to shift (negative = shift left, positive = shift right)
+        let shift = halfWidth * 2.0 * horizontalShift
+
+        // Apply the shift to create asymmetric frustum
+        let left = -halfWidth + shift
+        let right = halfWidth + shift
+
+        // Build the projection matrix (OpenGL/SceneKit convention)
+        let a = (right + left) / (right - left)
+        let b = (top + bottom) / (top - bottom)
+        let c = -(far + near) / (far - near)
+        let d = -(2.0 * far * near) / (far - near)
+        let e = (2.0 * near) / (right - left)
+        let f = (2.0 * near) / (top - bottom)
+
+        return SCNMatrix4(
+            m11: e,   m12: 0,   m13: 0,   m14: 0,
+            m21: 0,   m22: f,   m23: 0,   m24: 0,
+            m31: a,   m32: b,   m33: c,   m34: -1,
+            m41: 0,   m42: 0,   m43: d,   m44: 0
+        )
+    }
+
+    private func updateOffAxisProjection() {
+        // Calculate aspect ratio from the viewport
+        let viewWidth = view.bounds.width / 2  // Each eye gets half the screen
+        let viewHeight = view.bounds.height
+        if viewHeight > 0 {
+            screenAspect = Float(viewWidth / viewHeight)
+        }
+
+        // The camera passthrough creates "fake stereo" by cropping different parts of the image:
+        // - Left eye:  UVs from 0.0 to 0.92 (crops 8% from right) - shows more LEFT of scene
+        // - Right eye: UVs from 0.08 to 1.0 (crops 8% from left) - shows more RIGHT of scene
+        //
+        // For 3D objects to align with this, we need to shift the projection in the SAME direction.
+        // A positive horizontal shift moves the frustum right (showing more of the LEFT side of 3D space)
+        // A negative horizontal shift moves the frustum left (showing more of the RIGHT side of 3D space)
+        //
+        // So:
+        // - Left eye needs positive shift (to show more left, matching camera)
+        // - Right eye needs negative shift (to show more right, matching camera)
+        let offsetFraction = Float(stereoOffset)
+
+        // Apply stereo multiplier for debugging/tuning
+        let effectiveOffset = offsetFraction * stereoMultiplier
+
+        // Create projection for left eye
+        // Camera UVs [0, 0.92]: content shifts LEFT on screen (right side cropped)
+        // To match: 3D projection must shift LEFT on screen -> negative shift
+        let leftProjection = createShiftedProjectionMatrix(
+            horizontalShift: -effectiveOffset / 2.0,
+            aspect: screenAspect,
+            fovY: Float(eyeFOV),
+            near: zNear,
+            far: zFar
+        )
+
+        // Create projection for right eye  
+        // Camera UVs [0.08, 1.0]: content shifts RIGHT on screen (left side cropped)
+        // To match: 3D projection must shift RIGHT on screen -> positive shift
+        let rightProjection = createShiftedProjectionMatrix(
+            horizontalShift: effectiveOffset / 2.0,
+            aspect: screenAspect,
+            fovY: Float(eyeFOV),
+            near: zNear,
+            far: zFar
+        )
+
+        // Apply to cameras
+        leftEye.camera?.projectionTransform = leftProjection
+        rightEye.camera?.projectionTransform = rightProjection
+
+        // Debug: Print the projection parameters
+        print("[StereoDebug] effectiveOffset: \(effectiveOffset), screenAspect: \(screenAspect)")
+        print("[StereoDebug] Left projection m31 (a): \(leftProjection.m31)")
+        print("[StereoDebug] Right projection m31 (a): \(rightProjection.m31)")
     }
 
     private func createReticle() {
@@ -494,6 +666,29 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         config = newConfig
     }
 
+    /// Adjust the zero parallax distance at runtime.
+    /// Objects at this distance will appear at screen depth (no doubling).
+    /// - Parameter distance: Distance in meters (typical range: 0.5 - 3.0m)
+    func setZeroParallaxDistance(_ distance: Float) {
+        zeroParallaxDistance = max(0.1, distance)  // Clamp to minimum safe value
+        updateOffAxisProjection()
+    }
+
+    /// Get current zero parallax distance
+    var currentZeroParallaxDistance: Float {
+        zeroParallaxDistance
+    }
+
+    /// Debug: Set stereo offset multiplier (0 = no stereo, 1 = normal, 2 = exaggerated)
+    /// Use this to tune the stereo strength or disable it for testing
+    func setStereoMultiplier(_ multiplier: Float) {
+        stereoMultiplier = multiplier
+        updateOffAxisProjection()
+    }
+
+    // Debug multiplier for stereo effect (1.0 = normal)
+    private var stereoMultiplier: Float = 1.0
+
     // MARK: - Metal Setup
 
     private func setupMetal() {
@@ -517,7 +712,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         samplerDescriptor.tAddressMode = .clampToEdge
         sampler = device.makeSamplerState(descriptor: samplerDescriptor)!
 
-        // Create render pipeline
+        // Create render pipeline for camera passthrough
         let library = device.makeDefaultLibrary()!
         let vertexFunction = library.makeFunction(name: "stereoPassthroughVertex")!
         let fragmentFunction = library.makeFunction(name: "stereoPassthroughFragment")!
@@ -528,6 +723,24 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
 
         pipelineState = try! device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+
+        // Create render pipeline for occlusion overlay (with alpha blending)
+        let occlusionFragmentFunction = library.makeFunction(name: "stereoOcclusionFragment")!
+        
+        let occlusionPipelineDescriptor = MTLRenderPipelineDescriptor()
+        occlusionPipelineDescriptor.vertexFunction = vertexFunction
+        occlusionPipelineDescriptor.fragmentFunction = occlusionFragmentFunction
+        occlusionPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        // Enable alpha blending
+        occlusionPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
+        occlusionPipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
+        occlusionPipelineDescriptor.colorAttachments[0].alphaBlendOperation = .add
+        occlusionPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        occlusionPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
+        occlusionPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        occlusionPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+
+        occlusionPipelineState = try! device.makeRenderPipelineState(descriptor: occlusionPipelineDescriptor)
     }
 
     private func createTexture(from pixelBuffer: CVPixelBuffer, planeIndex: Int) -> MTLTexture? {
@@ -555,6 +768,32 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         return CVMetalTextureGetTexture(textureRef)
     }
+
+    /// Create texture from a single-plane pixel buffer (like segmentation mask)
+    private func createSinglePlaneTexture(from pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        // Segmentation buffer is typically 8-bit single channel
+        var textureRef: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            nil,
+            textureCache,
+            pixelBuffer,
+            nil,
+            .r8Unorm,
+            width,
+            height,
+            0,
+            &textureRef
+        )
+
+        guard status == kCVReturnSuccess, let textureRef = textureRef else {
+            return nil
+        }
+
+        return CVMetalTextureGetTexture(textureRef)
+    }
 }
 
 // MARK: - MTKViewDelegate
@@ -565,13 +804,24 @@ extension StereoARViewController: MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        // Determine which type of view this is
+        let isPassthroughView = (view === leftMetalView || view === rightMetalView)
+        let isOcclusionView = (view === leftOcclusionView || view === rightOcclusionView)
+        
+        if isPassthroughView {
+            drawPassthrough(in: view)
+        } else if isOcclusionView {
+            drawOcclusion(in: view)
+        }
+    }
+
+    private func drawPassthrough(in view: MTKView) {
         // Get the current pixel buffer
         frameLock.lock()
         guard let pixelBuffer = currentPixelBuffer else {
             frameLock.unlock()
             return
         }
-        // Don't clear currentPixelBuffer here - we'll use it for both eyes
         frameLock.unlock()
 
         // Create textures from pixel buffer (YCbCr format from camera)
@@ -589,9 +839,8 @@ extension StereoARViewController: MTKViewDelegate {
         // Add completion handler to flush texture cache periodically
         commandBuffer.addCompletedHandler { [weak self] _ in
             guard let self = self else { return }
-            // Flush texture cache every few frames to release old textures
             self.frameCounter += 1
-            if self.frameCounter % 3 == 0 {
+            if self.frameCounter % 6 == 0 {  // Less frequent flushing
                 CVMetalTextureCacheFlush(self.textureCache, 0)
             }
         }
@@ -601,14 +850,10 @@ extension StereoARViewController: MTKViewDelegate {
         let stereoOffsetValue = Float(stereoOffset)
 
         // Create vertex data for a full-screen quad with stereo offset
-        // The offset shifts the UV coordinates to create the stereo effect
         let leftOffset: Float = isLeftEye ? 0.0 : stereoOffsetValue
         let rightOffset: Float = isLeftEye ? stereoOffsetValue : 0.0
 
-        // Vertices: position (x, y) and texCoord (u, v)
-        // For landscape right orientation with front camera mirroring
         let vertices: [Float] = [
-            // Position      // TexCoord (with stereo offset and orientation)
             -1.0, -1.0,      leftOffset, 1.0,
              1.0, -1.0,      1.0 - rightOffset, 1.0,
             -1.0,  1.0,      leftOffset, 0.0,
@@ -623,6 +868,65 @@ extension StereoARViewController: MTKViewDelegate {
         renderEncoder.setVertexBytes(vertices, length: vertices.count * MemoryLayout<Float>.size, index: 0)
         renderEncoder.setFragmentTexture(yTexture, index: 0)
         renderEncoder.setFragmentTexture(cbcrTexture, index: 1)
+        renderEncoder.setFragmentSamplerState(sampler, index: 0)
+        renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        renderEncoder.endEncoding()
+
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
+
+    private func drawOcclusion(in view: MTKView) {
+        // Get the current buffers
+        frameLock.lock()
+        guard let pixelBuffer = currentPixelBuffer,
+              let segmentationBuffer = currentSegmentationBuffer else {
+            frameLock.unlock()
+            return
+        }
+        frameLock.unlock()
+
+        // Create textures
+        guard let yTexture = createTexture(from: pixelBuffer, planeIndex: 0),
+              let cbcrTexture = createTexture(from: pixelBuffer, planeIndex: 1),
+              let segmentationTexture = createSinglePlaneTexture(from: segmentationBuffer) else {
+            return
+        }
+
+        guard let drawable = view.currentDrawable,
+              let renderPassDescriptor = view.currentRenderPassDescriptor,
+              let commandBuffer = commandQueue.makeCommandBuffer() else {
+            return
+        }
+
+        // Clear to transparent
+        renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+
+        // Determine if this is left or right eye
+        let isLeftEye = (view === leftOcclusionView)
+        let stereoOffsetValue = Float(stereoOffset)
+
+        // Same stereo offset as passthrough
+        let leftOffset: Float = isLeftEye ? 0.0 : stereoOffsetValue
+        let rightOffset: Float = isLeftEye ? stereoOffsetValue : 0.0
+
+        let vertices: [Float] = [
+            -1.0, -1.0,      leftOffset, 1.0,
+             1.0, -1.0,      1.0 - rightOffset, 1.0,
+            -1.0,  1.0,      leftOffset, 0.0,
+             1.0,  1.0,      1.0 - rightOffset, 0.0,
+        ]
+
+        guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            return
+        }
+
+        renderEncoder.setRenderPipelineState(occlusionPipelineState)
+        renderEncoder.setVertexBytes(vertices, length: vertices.count * MemoryLayout<Float>.size, index: 0)
+        renderEncoder.setFragmentTexture(yTexture, index: 0)
+        renderEncoder.setFragmentTexture(cbcrTexture, index: 1)
+        renderEncoder.setFragmentTexture(segmentationTexture, index: 2)
         renderEncoder.setFragmentSamplerState(sampler, index: 0)
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         renderEncoder.endEncoding()
