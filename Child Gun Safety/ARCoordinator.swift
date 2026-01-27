@@ -390,14 +390,21 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     // MARK: - Helpers
 
-    /// Rotate −90° around X so the model lies on a horizontal surface.
+    /// Rotate −90° around Z so the model lies on a horizontal surface.
     func layFlat(_ e: Entity, objectType: String? = nil) {
         // Skip laying flat for the table
         if objectType == "table" {
             return
         }
-        let q = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-        e.orientation = q * e.orientation
+        
+        // Gun needs different rotation
+        if objectType == "gun" {
+            let q = simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(0, 0, 1))  // Rotate around Z
+            e.orientation = q * e.orientation
+        } else {
+            let q = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
+            e.orientation = q * e.orientation
+        }
     }
 
     func scaleToFit(_ entity: Entity?, targetWidthMeters: Float = 0.18, objectType: String) {

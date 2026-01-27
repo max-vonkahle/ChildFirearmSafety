@@ -32,6 +32,9 @@ final class LiveMicController {
     private let engine = AVAudioEngine()
     private var isRunning = false
 
+    // Background queue for audio engine operations to prevent main thread blocking
+    private let audioQueue = DispatchQueue(label: "com.childgunsafety.miccontrol", qos: .userInteractive)
+
     /// Target sample rate for Gemini Live audio input (24 kHz for native audio API).
     private let targetSampleRate: Double = 24_000
     private let rmsLogFloor: Float = -60.0
@@ -59,8 +62,25 @@ final class LiveMicController {
         Task {
             do {
                 try await configureAudioSession()
-                try startEngineAndTap(to: client)
-                isRunning = true
+
+                // Move engine start operations to background queue to avoid blocking main thread
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    audioQueue.async { [weak self] in
+                        guard let self = self else {
+                            continuation.resume(throwing: NSError(domain: "LiveMic", code: 99, userInfo: nil))
+                            return
+                        }
+                        do {
+                            try self.startEngineAndTap(to: client)
+                            Task { @MainActor in
+                                self.isRunning = true
+                            }
+                            continuation.resume()
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
             } catch {
                 onError?(error)
                 stop()
@@ -75,23 +95,31 @@ final class LiveMicController {
 
         currentClient = nil
 
-        let input = engine.inputNode
-        input.removeTap(onBus: 0)
-        engine.stop()
-        converter = nil
-        stopSpeechRecognition()
+        // Move engine stop operations to background queue to avoid blocking main thread
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        // Deactivate audio session
-        do {
-            let session = AVAudioSession.sharedInstance()
-            if !session.isOtherAudioPlaying {
-                try session.setActive(false, options: [.notifyOthersOnDeactivation])
+            let input = self.engine.inputNode
+            input.removeTap(onBus: 0)
+            self.engine.stop()
+
+            Task { @MainActor in
+                self.converter = nil
+                self.stopSpeechRecognition()
             }
-        } catch {
-            print("[LiveMic] AVAudioSession deactivate error:", error.localizedDescription)
-        }
 
-        print("🛑 [LiveMic] Stopped audio capture")
+            // Deactivate audio session
+            do {
+                let session = AVAudioSession.sharedInstance()
+                if !session.isOtherAudioPlaying {
+                    try session.setActive(false, options: [.notifyOthersOnDeactivation])
+                }
+            } catch {
+                print("[LiveMic] AVAudioSession deactivate error:", error.localizedDescription)
+            }
+
+            print("🛑 [LiveMic] Stopped audio capture")
+        }
     }
 
     // MARK: - Audio session & engine

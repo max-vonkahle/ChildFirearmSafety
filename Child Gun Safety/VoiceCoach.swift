@@ -201,16 +201,22 @@ final class VoiceCoach: ObservableObject {
                 }
             },
             onAudioReady: { [weak self] data, rate in
+                // Audio operations now run on background queues to avoid blocking main thread
+                guard let self else { return }
+
+                // Gate the mic so the model does not hear its own audio.
                 Task { @MainActor in
-                    guard let self else { return }
-                    // Gate the mic so the model does not hear its own audio.
                     if !self.micStoppedForCurrentTurn {
                         print("🔇 [VC] Stopping mic for model audio")
-                        LiveMicController.shared.stop()
                         self.micStoppedForCurrentTurn = true
                     }
-                    self.playLiveAudio(data: data, sampleRate: rate)
                 }
+
+                // Stop mic on background (now thread-safe)
+                LiveMicController.shared.stop()
+
+                // Play audio on background (now thread-safe)
+                self.playLiveAudio(data: data, sampleRate: rate)
             },
             onDone: { [weak self] in
                 Task { @MainActor in
@@ -244,7 +250,13 @@ final class VoiceCoach: ObservableObject {
 
     private func playLiveAudio(data: Data, sampleRate: Double) {
         guard !data.isEmpty else { return }
-        state = .speaking
+
+        // Update state on main thread (required for @Published property)
+        Task { @MainActor in
+            self.state = .speaking
+        }
+
+        // Audio playback now runs on background queue (inside LiveAudioPlayer)
         liveAudio.playPCM16(data, sampleRate: sampleRate)
     }
 
@@ -254,10 +266,13 @@ final class VoiceCoach: ObservableObject {
             print("⚠️ [VC] audio conversation already active, skipping resumeListening")
             return
         }
-        
+
         isConversationActive = true
         state = .listening
         VoicePerms.setModeListening()
+
+        // Start audio conversation (which internally calls LiveMicController.shared.startStreaming)
+        // The startStreaming method now runs engine operations on background queue
         liveHandle = live.startAudioConversation(handlers: audioConversationHandlers())
     }
 

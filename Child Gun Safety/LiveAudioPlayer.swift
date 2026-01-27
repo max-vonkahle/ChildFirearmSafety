@@ -14,6 +14,9 @@ final class LiveAudioPlayer {
     private let player = AVAudioPlayerNode()
     private let liveFormat: AVAudioFormat
 
+    // Background queue for audio operations to prevent main thread blocking
+    private let audioQueue = DispatchQueue(label: "com.childgunsafety.audioplayback", qos: .userInteractive)
+
     private init() {
         // Configure audio session for spoken audio playback.
         let session = AVAudioSession.sharedInstance()
@@ -51,69 +54,77 @@ final class LiveAudioPlayer {
     ///
     /// - Parameters:
     ///   - data: Little-endian 16-bit signed mono PCM samples (Gemini Live output).
-    ///   - sampleRate: The model’s sample rate (usually 24_000). We ignore it for now
-    ///                 and play at the device’s native rate; this may change speed/pitch
+    ///   - sampleRate: The model's sample rate (usually 24_000). We ignore it for now
+    ///                 and play at the device's native rate; this may change speed/pitch
     ///                 slightly but avoids crashes.
     func playPCM16(_ data: Data, sampleRate: Double) {
         guard !data.isEmpty else { return }
 
-        let bytesPerSample = MemoryLayout<Int16>.size
-        let frameCount = data.count / bytesPerSample
-        guard frameCount > 0 else { return }
+        // Dispatch all audio processing to background queue to avoid blocking main thread
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        // Create a buffer in the live format (float32, deinterleaved).
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: liveFormat,
-            frameCapacity: AVAudioFrameCount(frameCount)
-        ) else {
-            // print("[Audio] Failed to create buffer")
-            return
-        }
-        buffer.frameLength = AVAudioFrameCount(frameCount)
+            let bytesPerSample = MemoryLayout<Int16>.size
+            let frameCount = data.count / bytesPerSample
+            guard frameCount > 0 else { return }
 
-        guard let channelData = buffer.floatChannelData else {
-            // print("[Audio] Missing floatChannelData")
-            return
-        }
-
-        // Convert Int16 mono → Float32 mono in channel 0.
-        data.withUnsafeBytes { rawBuffer in
-            let src = rawBuffer.bindMemory(to: Int16.self)
-            let dst = channelData[0]
-            for i in 0..<frameCount {
-                dst[i] = Float(src[i]) / Float(Int16.max)
+            // Create a buffer in the live format (float32, deinterleaved).
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: self.liveFormat,
+                frameCapacity: AVAudioFrameCount(frameCount)
+            ) else {
+                // print("[Audio] Failed to create buffer")
+                return
             }
-        }
+            buffer.frameLength = AVAudioFrameCount(frameCount)
 
-        // If liveFormat has more than one channel, zero the extra channels.
-        if liveFormat.channelCount > 1 {
-            for ch in 1..<Int(liveFormat.channelCount) {
-                memset(
-                    channelData[ch],
-                    0,
-                    Int(frameCount) * MemoryLayout<Float>.size
-                )
+            guard let channelData = buffer.floatChannelData else {
+                // print("[Audio] Missing floatChannelData")
+                return
             }
-        }
 
-        if !engine.isRunning {
-            do {
-                try engine.start()
-                // print("[Audio] Engine restarted")
-            } catch {
-                // print("[Audio] Failed to restart engine:", error)
+            // Convert Int16 mono → Float32 mono in channel 0.
+            data.withUnsafeBytes { rawBuffer in
+                let src = rawBuffer.bindMemory(to: Int16.self)
+                let dst = channelData[0]
+                for i in 0..<frameCount {
+                    dst[i] = Float(src[i]) / Float(Int16.max)
+                }
             }
-        }
 
-        if !player.isPlaying {
-            player.play()
-        }
+            // If liveFormat has more than one channel, zero the extra channels.
+            if self.liveFormat.channelCount > 1 {
+                for ch in 1..<Int(self.liveFormat.channelCount) {
+                    memset(
+                        channelData[ch],
+                        0,
+                        Int(frameCount) * MemoryLayout<Float>.size
+                    )
+                }
+            }
 
-        // print("[Audio] Scheduling buffer: \(data.count) bytes, \(frameCount) frames (input sr \(sampleRate), liveFormat sr \(liveFormat.sampleRate))")
-        player.scheduleBuffer(buffer, completionHandler: nil)
+            if !self.engine.isRunning {
+                do {
+                    try self.engine.start()
+                    // print("[Audio] Engine restarted")
+                } catch {
+                    // print("[Audio] Failed to restart engine:", error)
+                }
+            }
+
+            if !self.player.isPlaying {
+                self.player.play()
+            }
+
+            // print("[Audio] Scheduling buffer: \(data.count) bytes, \(frameCount) frames (input sr \(sampleRate), liveFormat sr \(self.liveFormat.sampleRate))")
+            self.player.scheduleBuffer(buffer, completionHandler: nil)
+        }
     }
 
     func stop() {
-        player.stop()
+        // Stop operations should also be on background queue
+        audioQueue.async { [weak self] in
+            self?.player.stop()
+        }
     }
 }
