@@ -51,6 +51,11 @@ final class LiveMicController {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var lastPrintedTranscript: String = ""
 
+    // Client-side VAD: Stop sending audio after detecting a pause
+    private var pauseDetectionTimer: Task<Void, Never>?
+    private let pauseThreshold: TimeInterval = 1.2  // 1.2 seconds of no new speech = pause
+    private var isStreamingAudio = true  // Track if we should send audio chunks
+
     // MARK: - Public API
 
     /// Starts capturing mic audio and streaming it into GeminiFlashLiveClient.
@@ -58,6 +63,7 @@ final class LiveMicController {
         guard !isRunning else { return }
 
         currentClient = client
+        isStreamingAudio = true  // Reset VAD state for new turn
 
         Task {
             do {
@@ -105,6 +111,8 @@ final class LiveMicController {
 
             Task { @MainActor in
                 self.converter = nil
+                self.pauseDetectionTimer?.cancel()
+                self.pauseDetectionTimer = nil
                 self.stopSpeechRecognition()
             }
 
@@ -151,10 +159,12 @@ final class LiveMicController {
         }
 
         // Duplex mode: record + play Gemini's audio with echo cancellation.
+        // .voiceChat mode provides built-in echo cancellation
+        // .duckOthers reduces background audio interference
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.defaultToSpeaker, .allowBluetooth]
+            options: [.defaultToSpeaker, .allowBluetooth, .duckOthers]
         )
 
         // Ask for 24 kHz if possible
@@ -274,9 +284,11 @@ final class LiveMicController {
         }
         #endif
 
-        // Stream the PCM chunk into Gemini Live
+        // Stream the PCM chunk into Gemini Live (only if not paused by VAD)
         Task { @MainActor in
-            await client.sendAudioChunk(pcmData)
+            if self.isStreamingAudio {
+                await client.sendAudioChunk(pcmData)
+            }
         }
     }
 
@@ -337,7 +349,30 @@ final class LiveMicController {
 
                     if text != self.lastPrintedTranscript {
                         self.lastPrintedTranscript = text
-                         print("🗣️ [LiveMic][debug ASR] \(text)")
+                        print("🗣️ [LiveMic][debug ASR] \(text)")
+
+                        // If we had paused but user is speaking again, resume streaming
+                        if !self.isStreamingAudio {
+                            self.isStreamingAudio = true
+                            print("▶️ [LiveMic] User resumed speaking - streaming audio again")
+                        }
+
+                        // Cancel any existing pause timer and start a new one
+                        self.pauseDetectionTimer?.cancel()
+                        self.pauseDetectionTimer = Task { @MainActor in
+                            do {
+                                // Wait for pause threshold
+                                try await Task.sleep(for: .seconds(self.pauseThreshold))
+
+                                // If we reach here, user has paused - stop streaming audio
+                                if self.isStreamingAudio {
+                                    self.isStreamingAudio = false
+                                    print("🔇 [LiveMic] Pause detected after \(self.pauseThreshold)s - stopped sending audio")
+                                }
+                            } catch {
+                                // Timer was cancelled (user spoke again)
+                            }
+                        }
                     }
                 }
             }

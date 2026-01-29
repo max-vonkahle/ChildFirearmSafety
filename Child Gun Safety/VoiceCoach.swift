@@ -144,6 +144,7 @@ final class VoiceCoach: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.llmActive = true
+                    self.liveAudio.resetForNewTurn()  // Reset buffer tracking for new turn
                     self.append("\nCoach: ")
                 }
             },
@@ -161,8 +162,15 @@ final class VoiceCoach: ObservableObject {
                     guard let self else { return }
                     self.llmActive = false
                     self.isTurnInFlight = false
-                    // After the intro finishes, start listening to the child via the live mic.
-                    self.resumeListening()
+
+                    // Wait for audio playback to finish before starting to listen
+                    self.liveAudio.onPlaybackComplete { [weak self] in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            print("✅ [VC] intro playback complete, starting conversation")
+                            self.resumeListening()
+                        }
+                    }
                 }
             },
             onError: { [weak self] err in
@@ -189,6 +197,7 @@ final class VoiceCoach: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.llmActive = true
+                    self.liveAudio.resetForNewTurn()  // Reset buffer tracking for new turn
                     print("🧵 [VC] audio conversation open → starting mic")
                     // CRITICAL: Pass the correct client instance!
                     LiveMicController.shared.startStreaming(to: self.live)
@@ -225,12 +234,20 @@ final class VoiceCoach: ObservableObject {
                     self.isTurnInFlight = false
                     self.isConversationActive = false
                     self.micStoppedForCurrentTurn = false
-                    print("✅ [VC] audio turn complete")
-                    
-                    // After the model responds, resume listening for the next utterance
-                    // Add a small delay to avoid immediate re-triggering
-                    try? await Task.sleep(for: .milliseconds(500))
-                    self.resumeListening()
+                    print("✅ [VC] audio turn complete (model done sending)")
+
+                    // Wait for ALL audio playback to finish before resuming mic
+                    self.liveAudio.onPlaybackComplete { [weak self] in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            print("✅ [VC] audio playback complete, waiting for echo to subside...")
+                            // Longer delay to let acoustic echo fully dissipate
+                            // This prevents the mic from picking up residual audio that confuses VAD
+                            try? await Task.sleep(for: .milliseconds(1000))
+                            print("✅ [VC] resuming mic after echo delay")
+                            self.resumeListening()
+                        }
+                    }
                 }
             },
             onError: { [weak self] err in

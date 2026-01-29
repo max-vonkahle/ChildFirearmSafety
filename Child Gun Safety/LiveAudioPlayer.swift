@@ -17,6 +17,11 @@ final class LiveAudioPlayer {
     // Background queue for audio operations to prevent main thread blocking
     private let audioQueue = DispatchQueue(label: "com.childgunsafety.audioplayback", qos: .userInteractive)
 
+    // Track scheduled vs completed buffers to know when playback finishes
+    private var scheduledBuffers = 0
+    private var completedBuffers = 0
+    private var playbackCompletionHandler: (() -> Void)?
+
     private init() {
         // Configure audio session for spoken audio playback.
         let session = AVAudioSession.sharedInstance()
@@ -117,14 +122,63 @@ final class LiveAudioPlayer {
             }
 
             // print("[Audio] Scheduling buffer: \(data.count) bytes, \(frameCount) frames (input sr \(sampleRate), liveFormat sr \(self.liveFormat.sampleRate))")
-            self.player.scheduleBuffer(buffer, completionHandler: nil)
+            self.scheduledBuffers += 1
+            let bufferIndex = self.scheduledBuffers
+
+            self.player.scheduleBuffer(buffer) { [weak self] in
+                self?.audioQueue.async {
+                    guard let self = self else { return }
+                    self.completedBuffers += 1
+
+                    // If all scheduled buffers have completed, call the completion handler
+                    if self.completedBuffers == self.scheduledBuffers {
+                        if let handler = self.playbackCompletionHandler {
+                            // print("[Audio] All buffers complete (\(self.completedBuffers)/\(self.scheduledBuffers)), calling completion")
+                            self.playbackCompletionHandler = nil
+                            DispatchQueue.main.async {
+                                handler()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Set a completion handler to be called when all currently scheduled buffers finish playing
+    func onPlaybackComplete(_ handler: @escaping () -> Void) {
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            // If no buffers are scheduled or all have completed, call immediately
+            if self.scheduledBuffers == 0 || self.completedBuffers == self.scheduledBuffers {
+                DispatchQueue.main.async {
+                    handler()
+                }
+            } else {
+                self.playbackCompletionHandler = handler
+            }
+        }
+    }
+
+    /// Reset buffer tracking for a new audio turn
+    func resetForNewTurn() {
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.scheduledBuffers = 0
+            self.completedBuffers = 0
+            self.playbackCompletionHandler = nil
         }
     }
 
     func stop() {
         // Stop operations should also be on background queue
         audioQueue.async { [weak self] in
-            self?.player.stop()
+            guard let self = self else { return }
+            self.player.stop()
+            self.scheduledBuffers = 0
+            self.completedBuffers = 0
+            self.playbackCompletionHandler = nil
         }
     }
 }

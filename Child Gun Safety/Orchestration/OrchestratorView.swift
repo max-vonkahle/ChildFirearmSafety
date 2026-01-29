@@ -63,6 +63,12 @@ struct OrchestratorView: View {
                     }
                     .opacity(showCamera ? 1 : 0)
 
+                    // Microphone state indicator (top-right)
+                    VStack {
+                        MicIndicatorView(coach: coach)
+                        Spacer()
+                    }
+
                     // Black background shown until camera is revealed
                     if !showCamera {
                         Color.black

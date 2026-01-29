@@ -23,6 +23,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Model templates and placed nodes (for loading saved rooms)
     private var modelTemplates: [String: SCNNode] = [:]  // asset name -> template node
     private var placedNodes: [SCNNode] = []  // All placed asset nodes
+    private var hasNotifiedAssetsConfigured = false  // Ensure notification fires only once
 
     // GPU-accelerated passthrough views using Metal
     private var metalDevice: MTLDevice!
@@ -289,6 +290,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     // Restore models when anchors are loaded from world map
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        var restoredAnyAsset = false
+
         for anchor in anchors where anchor.name?.hasPrefix("placedAsset_") == true {
             // Parse asset type from anchor name (e.g., "placedAsset_gun" -> "gun")
             let components = anchor.name?.split(separator: "_") ?? []
@@ -311,13 +314,21 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 placedNodes.append(containerNode)
 
                 print("\(assetName) model restored at saved position in stereo mode")
+                restoredAnyAsset = true
             } else {
                 print("Warning: \(assetName) model template not loaded, cannot restore anchor")
             }
         }
 
-        // Notify that assets are configured (matching ARCoordinator behavior)
-        NotificationCenter.default.post(name: .assetsConfigured, object: nil)
+        // Only notify after ALL anchors in this batch are restored
+        // Add slight delay to ensure all anchors are processed, and only notify once
+        if restoredAnyAsset && !hasNotifiedAssetsConfigured {
+            hasNotifiedAssetsConfigured = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                print("✅ All assets restored, notifying UI")
+                NotificationCenter.default.post(name: .assetsConfigured, object: nil)
+            }
+        }
     }
 
     // MARK: - Gun Model and World Map Loading
@@ -379,6 +390,9 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     @objc private func handleLoadWorldMap(_ notification: Notification) {
         let roomId = (notification.userInfo?["roomId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let effectiveId = roomId?.isEmpty == false ? roomId! : "default"
+
+        // Reset notification flag for new room
+        hasNotifiedAssetsConfigured = false
 
         do {
             let map = try WorldMapStore.load(roomId: effectiveId)

@@ -61,8 +61,8 @@ final class GeminiFlashLiveClient {
         didSet {
             #if DEBUG
             if session == nil && oldValue != nil {
-                print("⚠️ [Live] Session was cleared! Stack trace:")
-                Thread.callStackSymbols.forEach { print("  \($0)") }
+                // Session closed - this is normal during shutdown
+                print("✅ [Live] Session closed gracefully")
             }
             #endif
         }
@@ -148,9 +148,9 @@ final class GeminiFlashLiveClient {
         }
 
         #if DEBUG
-        // Only print every 50th chunk to reduce log spam
-        if Int.random(in: 0..<50) == 0 {
-            // print("🎙 [Live] sending audio chunk of \(data.count) bytes")
+        // Only print occasionally to reduce log spam
+        if Int.random(in: 0..<100) == 0 {
+            print("🎙 [Live] sending audio chunk: \(data.count) bytes")
         }
         #endif
         
@@ -273,20 +273,25 @@ final class GeminiFlashLiveClient {
     // MARK: - Message handling
 
     private func handle(message: LiveServerMessage) {
-        guard let handlers = currentHandlers else { return }
+        guard let handlers = currentHandlers else {
+            #if DEBUG
+            print("⚠️ [Live] Message received but no handlers set - ignoring")
+            #endif
+            return
+        }
 
         switch message.payload {
         case .content(let serverContent):
 
             // High-level info for each content message
             #if DEBUG
-            // print("🟣 [Live] content: modelTurn? \(serverContent.modelTurn != nil), turnComplete: \(serverContent.isTurnComplete)")
+            print("🟣 [Live] content: modelTurn? \(serverContent.modelTurn != nil), turnComplete: \(serverContent.isTurnComplete)")
             #endif
 
             // 1) Model turn content, if present.
             if let turn = serverContent.modelTurn {
                 #if DEBUG
-                print("🟣 [Live] NEW MODEL TURN (parts: \(turn.parts.count))")
+                // print("🟣 [Live] NEW MODEL TURN (parts: \(turn.parts.count))")
                 #endif
 
                 #if DEBUG
@@ -307,7 +312,7 @@ final class GeminiFlashLiveClient {
                         if mime.hasPrefix("audio/pcm") {
                             let rate = Self.sampleRate(from: inlinePart.mimeType) ?? 24_000
                             #if DEBUG
-                            // print("🔊 [LLM ← audio] \(inlinePart.data.count) bytes @ \(rate) Hz")
+                            print("🔊 [LLM ← audio] \(inlinePart.data.count) bytes @ \(rate) Hz")
                             #endif
                             pendingSampleRate = rate
                             pendingAudio.append(inlinePart.data)
@@ -318,7 +323,7 @@ final class GeminiFlashLiveClient {
                             #endif
                         }
                         #if DEBUG
-                        print("🔍 [Live] Model audio part: \(inlinePart.mimeType), bytes: \(inlinePart.data.count)")
+                        // print("🔍 [Live] Model audio part: \(inlinePart.mimeType), bytes: \(inlinePart.data.count)")
                         #endif
                     } else {
                         #if DEBUG
@@ -329,13 +334,13 @@ final class GeminiFlashLiveClient {
             } else {
                 // No modelTurn at all – useful to know!
                 #if DEBUG
-                print("🟥 [Live] content with NO modelTurn")
+                // print("🟥 [Live] content with NO modelTurn")
                 #endif
             }
 
             if serverContent.isTurnComplete {
                 #if DEBUG
-                print("🟣 [Live] MODEL TURN COMPLETE — buffered audio size: \(pendingAudio.count) bytes at \(pendingSampleRate) Hz")
+                // print("🟣 [Live] MODEL TURN COMPLETE — buffered audio size: \(pendingAudio.count) bytes at \(pendingSampleRate) Hz")
                 #endif
                 pendingAudio.removeAll(keepingCapacity: false)
                 #if DEBUG

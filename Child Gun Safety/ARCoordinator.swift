@@ -46,6 +46,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var placedAnchors: [AnchorEntity] = []
     private var placedARAnchors: [ARAnchor] = []
     private var currentAsset: String? = nil
+    private var hasNotifiedAssetsConfigured = false  // Ensure notification fires only once
 
     // Subscriptions / requests
     private var cancellable: AnyCancellable?
@@ -317,6 +318,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     func loadWorldMap(roomId: String) {
         guard let arView = arView else { return }
+
+        // Reset notification flag for new room
+        hasNotifiedAssetsConfigured = false
+
         do {
             let map = try WorldMapStore.load(roomId: roomId)
             let cfg = ARWorldTrackingConfiguration()
@@ -348,6 +353,8 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
         guard let arView = arView else { return }
+        var restoredAnyAsset = false
+
         for a in anchors where a.name?.hasPrefix("placedAsset_") == true {
             // Parse asset type
             let components = a.name?.split(separator: "_") ?? []
@@ -375,10 +382,19 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 warningShown = false
 
                 print("Restored \(asset) at saved position")
+                restoredAnyAsset = true
             }
         }
-        // Notify that assets are configured
-        NotificationCenter.default.post(name: .assetsConfigured, object: nil)
+
+        // Only notify after ALL anchors in this batch are restored
+        // Add delay to ensure assets are fully rendered/visible
+        if restoredAnyAsset && !hasNotifiedAssetsConfigured {
+            hasNotifiedAssetsConfigured = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                print("✅ All assets restored and visible, notifying UI")
+                NotificationCenter.default.post(name: .assetsConfigured, object: nil)
+            }
+        }
     }
 
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
