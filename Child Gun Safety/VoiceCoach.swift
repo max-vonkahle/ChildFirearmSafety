@@ -41,8 +41,8 @@ final class VoiceCoach: ObservableObject {
     // Lifecycle flag to coordinate LLM streaming and playback
     private var llmActive = false
 
-    init() {
-        self.systemPrompt = UserDefaults.standard.string(forKey: "systemPrompt") ?? defaultPrompt
+    init(promptKey: String = "systemPrompt") {
+        self.systemPrompt = UserDefaults.standard.string(forKey: promptKey) ?? defaultPrompt
         setupMicCallbacks()
     }
 

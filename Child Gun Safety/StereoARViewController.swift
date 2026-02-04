@@ -25,6 +25,13 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var placedNodes: [SCNNode] = []  // All placed asset nodes
     private var hasNotifiedAssetsConfigured = false  // Ensure notification fires only once
 
+    // Testing mode support
+    var testingRoomId: String?
+    var onTestingSceneReady: (() -> Void)?
+    private var testingAssetTransforms: [String: simd_float4x4] = [:]
+    private var testingAssetsPlaced = false
+    private var relocalizationTimer: Timer?
+
     // GPU-accelerated passthrough views using Metal
     private var metalDevice: MTLDevice!
     private var leftMetalView: MTKView!
@@ -219,19 +226,22 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // Initial reticle drawing
         createReticle()
 
-        // --- ARKit session setup with person segmentation for occlusion ---
+        // --- ARKit session setup ---
         session.delegate = self
-        let cfg = ARWorldTrackingConfiguration()
-        cfg.planeDetection = [.horizontal]
+        if let roomId = testingRoomId {
+            startTestingSession(roomId: roomId)
+        } else {
+            let cfg = ARWorldTrackingConfiguration()
+            cfg.planeDetection = [.horizontal]
 
-        // Enable person segmentation for occlusion
-        if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
-            cfg.frameSemantics.insert(.personSegmentationWithDepth)
-        } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentation) {
-            cfg.frameSemantics.insert(.personSegmentation)
+            if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
+                cfg.frameSemantics.insert(.personSegmentationWithDepth)
+            } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentation) {
+                cfg.frameSemantics.insert(.personSegmentation)
+            }
+
+            session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
         }
-
-        session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
     }
 
     override func viewDidLayoutSubviews() {
@@ -266,26 +276,39 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        relocalizationTimer?.invalidate()
         session.pause()
     }
 
     deinit {
+        relocalizationTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
     // Keep camera aligned to ARKit head pose + store pixel buffer for GPU rendering
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        // Update head position immediately (fast)
         baseCameraNode.simdTransform = frame.camera.transform
 
-        // Store pixel buffer reference for Metal rendering
-        // IMPORTANT: We only store the pixel buffer, not the frame itself,
-        // to avoid retaining ARFrames. The pixel buffer is released after each draw.
         frameLock.lock()
         currentPixelBuffer = frame.capturedImage
-        // Also capture the person segmentation stencil for occlusion
         currentSegmentationBuffer = frame.segmentationBuffer
         frameLock.unlock()
+
+        // Testing: wait for relocalization before placing assets
+        if testingRoomId != nil && !testingAssetsPlaced {
+            switch frame.worldMappingStatus {
+            case .mapped, .extending:
+                testingAssetsPlaced = true
+                relocalizationTimer?.invalidate()
+                print("✅ Testing world map relocalized - placing assets")
+                DispatchQueue.main.async { [weak self] in
+                    self?.placeTestingAssets()
+                    self?.onTestingSceneReady?()
+                }
+            default:
+                break
+            }
+        }
     }
 
     // Restore models when anchors are loaded from world map
@@ -425,6 +448,132 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         } catch {
             print("Failed to load world map in stereo mode:", error)
         }
+    }
+
+    // MARK: - Testing Mode
+
+    private func startTestingSession(roomId: String) {
+        guard let roomData = RoomLibrary.loadTestingRoom(roomId: roomId) else {
+            print("⚠️ Failed to load testing room: \(roomId)")
+            onTestingSceneReady?()
+            return
+        }
+
+        testingAssetTransforms = roomData.assets
+
+        let cfg = ARWorldTrackingConfiguration()
+        cfg.planeDetection = [.horizontal]
+        cfg.initialWorldMap = roomData.worldMap
+
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            cfg.sceneReconstruction = .mesh
+        }
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+            cfg.frameSemantics.insert(.sceneDepth)
+        }
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
+            cfg.frameSemantics.insert(.personSegmentationWithDepth)
+        } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentation) {
+            cfg.frameSemantics.insert(.personSegmentation)
+        }
+
+        session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
+        print("✅ Testing AR session started with world map (\(roomData.worldMap.anchors.count) anchors)")
+
+        // Fallback: place assets after 10s even if not fully relocalized
+        relocalizationTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
+            guard let self = self, !self.testingAssetsPlaced else { return }
+            print("⏱️ Testing relocalization timeout - placing assets anyway")
+            self.testingAssetsPlaced = true
+            self.placeTestingAssets()
+            self.onTestingSceneReady?()
+        }
+    }
+
+    private func placeTestingAssets() {
+        print("\n🔧 === PLACING TESTING ASSETS (STEREO) ===")
+
+        guard let kitchenTransform = testingAssetTransforms["kitchen"] else {
+            print("⚠️ No kitchen transform in testing room data")
+            return
+        }
+
+        // Kitchen at natural size (no scaling — matches TestingARViewController)
+        placeTestingModel(named: "kitchen", at: kitchenTransform)
+
+        // Gun scaled to 0.2m, positioned relative to kitchen
+        let relativeOffset = SIMD3<Float>(0.5823, 0.8431, -2.5297)
+        let gunTransform = calculateTestingGunTransform(kitchenTransform: kitchenTransform, relativeOffset: relativeOffset)
+        placeTestingModel(named: "gun", at: gunTransform, targetWidth: 0.2, isGun: true)
+
+        print("=== TESTING ASSET PLACEMENT COMPLETE ===\n")
+    }
+
+    private func placeTestingModel(named name: String, at transform: simd_float4x4, targetWidth: Float? = nil, isGun: Bool = false) {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "usdz") else {
+            print("⚠️ \(name).usdz not found")
+            return
+        }
+
+        do {
+            let loadedScene = try SCNScene(url: url, options: nil)
+            let modelNode = SCNNode()
+            for child in loadedScene.rootNode.childNodes {
+                modelNode.addChildNode(child.clone())
+            }
+
+            // Scale if a target width is specified
+            if let targetWidth = targetWidth {
+                let bounds = modelNode.boundingBox
+                let size = SCNVector3(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z)
+                let currentWidth = max(size.x, size.z)
+                if currentWidth > 0 {
+                    let scale = targetWidth / currentWidth
+                    modelNode.scale = SCNVector3(scale, scale, scale)
+                    print("📏 Scaled \(name): \(currentWidth)m -> \(targetWidth)m (factor: \(scale))")
+                }
+            }
+
+            // Correct USDZ base orientation (-90° X)
+            let rotX90 = SCNMatrix4MakeRotation(-.pi / 2, 1, 0, 0)
+            modelNode.transform = SCNMatrix4Mult(rotX90, modelNode.transform)
+
+            // Additional gun-specific orientation corrections
+            if isGun {
+                let rotX = SCNMatrix4MakeRotation(-.pi / 2, 1, 0, 0)
+                let rotZ = SCNMatrix4MakeRotation(.pi / 2, 0, 0, 1)
+                modelNode.transform = SCNMatrix4Mult(rotZ, SCNMatrix4Mult(rotX, modelNode.transform))
+            }
+
+            // Wrap in a container positioned at the saved world-space transform
+            let containerNode = SCNNode()
+            containerNode.simdTransform = transform
+            containerNode.addChildNode(modelNode)
+            scene.rootNode.addChildNode(containerNode)
+
+            let pos = transform.columns.3
+            print("✅ Placed \(name) at (\(pos.x), \(pos.y), \(pos.z))")
+        } catch {
+            print("❌ Failed to load \(name): \(error)")
+        }
+    }
+
+    private func calculateTestingGunTransform(kitchenTransform: simd_float4x4, relativeOffset: SIMD3<Float>) -> simd_float4x4 {
+        let kitchenPosition = SIMD3<Float>(
+            kitchenTransform.columns.3.x,
+            kitchenTransform.columns.3.y,
+            kitchenTransform.columns.3.z
+        )
+        let rotationMatrix = simd_float3x3(
+            SIMD3<Float>(kitchenTransform.columns.0.x, kitchenTransform.columns.0.y, kitchenTransform.columns.0.z),
+            SIMD3<Float>(kitchenTransform.columns.1.x, kitchenTransform.columns.1.y, kitchenTransform.columns.1.z),
+            SIMD3<Float>(kitchenTransform.columns.2.x, kitchenTransform.columns.2.y, kitchenTransform.columns.2.z)
+        )
+        let rotatedOffset = rotationMatrix * relativeOffset
+        let gunPosition = kitchenPosition + rotatedOffset
+        var gunTransform = kitchenTransform
+        gunTransform.columns.3 = SIMD4<Float>(gunPosition.x, gunPosition.y, gunPosition.z, 1.0)
+        return gunTransform
     }
 
     // MARK: - Cardboard reticle / mask (ported from ARFun)

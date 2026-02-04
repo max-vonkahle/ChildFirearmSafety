@@ -65,29 +65,25 @@ struct ARSceneView<Overlay: View>: View {
         .overlay(alignment: .bottom) {
             overlay()
         }
-        .safeAreaInset(edge: .top) {
+        .overlay(alignment: .topTrailing) {
             Group {
                 if showExitUI, let onExit {
-                    HStack {
-                        Spacer()
-                        Button {
-                            cleanupExitAutoHide()
-                            onExit()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 28, weight: .bold))
-                                .padding(16)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-                        .accessibilityLabel("Exit to Home")
-                        .transition(.opacity.combined(with: .scale))
+                    Button {
+                        cleanupExitAutoHide()
+                        onExit()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 28, weight: .bold))
+                            .padding(16)
+                            .background(.ultraThinMaterial, in: Circle())
                     }
-                    .padding(.top, 32)
+                    .accessibilityLabel("Exit to Home")
+                    .transition(.opacity.combined(with: .scale))
+                    .padding(.top, 44)
                     .padding(.trailing, 16)
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: showExitUI)
-            .zIndex(1000)
         }
         .onDisappear {
             cleanupExitAutoHide()
