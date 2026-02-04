@@ -19,14 +19,14 @@
 			containerPortal = 50D8C4EB2E81FC6400F906DF /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 50D8C4F22E81FC6400F906DF;
-			remoteInfo = "Child Gun Safety";
+			remoteInfo = "Child Firearm Safety";
 		};
 		50D8C50E2E81FC6500F906DF /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 50D8C4EB2E81FC6400F906DF /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 50D8C4F22E81FC6400F906DF;
-			remoteInfo = "Child Gun Safety";
+			remoteInfo = "Child Firearm Safety";
 		};
 /* End PBXContainerItemProxy section */
 
@@ -38,19 +38,19 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		50D8C4F52E81FC6400F906DF /* Child Gun Safety */ = {
+		50D8C4F52E81FC6400F906DF /* Child Firearm Safety */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Child Gun Safety";
+			path = "Child Firearm Safety";
 			sourceTree = "<group>";
 		};
-		50D8C5062E81FC6500F906DF /* Child Gun SafetyTests */ = {
+		50D8C5062E81FC6500F906DF /* Child Firearm SafetyTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Child Gun SafetyTests";
+			path = "Child Firearm SafetyTests";
 			sourceTree = "<group>";
 		};
-		50D8C5102E81FC6500F906DF /* Child Gun SafetyUITests */ = {
+		50D8C5102E81FC6500F906DF /* Child Firearm SafetyUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Child Gun SafetyUITests";
+			path = "Child Firearm SafetyUITests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -88,9 +88,9 @@
 			isa = PBXGroup;
 			children = (
 				50D8C5262E8355A600F906DF /* Secrets.xcconfig */,
-				50D8C4F52E81FC6400F906DF /* Child Gun Safety */,
-				50D8C5062E81FC6500F906DF /* Child Gun SafetyTests */,
-				50D8C5102E81FC6500F906DF /* Child Gun SafetyUITests */,
+				50D8C4F52E81FC6400F906DF /* Child Firearm Safety */,
+				50D8C5062E81FC6500F906DF /* Child Firearm SafetyTests */,
+				50D8C5102E81FC6500F906DF /* Child Firearm SafetyUITests */,
 				50D8C4F42E81FC6400F906DF /* Products */,
 			);
 			sourceTree = "<group>";
@@ -121,7 +121,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				50D8C4F52E81FC6400F906DF /* Child Gun Safety */,
+				50D8C4F52E81FC6400F906DF /* Child Firearm Safety */,
 			);
 			name = "Child Firearm Safety";
 			packageProductDependencies = (
@@ -130,7 +130,7 @@
 				50598A1E2EA5DFF100C328BD /* FirebaseAnalyticsCore */,
 				507F0DF12F16FBF700BC3945 /* FirebaseAILogic */,
 			);
-			productName = "Child Gun Safety";
+			productName = "Child Firearm Safety";
 			productReference = 50D8C4F32E81FC6400F906DF /* Child Firearm Safety.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -148,12 +148,12 @@
 				50D8C5052E81FC6500F906DF /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				50D8C5062E81FC6500F906DF /* Child Gun SafetyTests */,
+				50D8C5062E81FC6500F906DF /* Child Firearm SafetyTests */,
 			);
 			name = "Child Firearm SafetyTests";
 			packageProductDependencies = (
 			);
-			productName = "Child Gun SafetyTests";
+			productName = "Child Firearm SafetyTests";
 			productReference = 50D8C5032E81FC6500F906DF /* Child Firearm SafetyTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
@@ -171,12 +171,12 @@
 				50D8C50F2E81FC6500F906DF /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				50D8C5102E81FC6500F906DF /* Child Gun SafetyUITests */,
+				50D8C5102E81FC6500F906DF /* Child Firearm SafetyUITests */,
 			);
 			name = "Child Firearm SafetyUITests";
 			packageProductDependencies = (
 			);
-			productName = "Child Gun SafetyUITests";
+			productName = "Child Firearm SafetyUITests";
 			productReference = 50D8C50D2E81FC6500F906DF /* Child Firearm SafetyUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
@@ -422,12 +422,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Child Gun Safety/Preview Content\"";
+				DEVELOPMENT_ASSET_PATHS = "\"Child Firearm Safety/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "Child-Gun-Safety-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Child Gun Safety";
-				INFOPLIST_KEY_NSCameraUsageDescription = "";
+				INFOPLIST_FILE = "Child-Firearm-Safety-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Child Firearm Safety";
+				INFOPLIST_KEY_NSCameraUsageDescription = "This app needs camera for the live feed input of the Augmented Reality";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "This app needs microphone access for the voice coach.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "This app transcribes your speech to enable the voice coach.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -442,7 +442,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Gun-Safety";
+				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Firearm-Safety";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -458,12 +458,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Child Gun Safety/Preview Content\"";
+				DEVELOPMENT_ASSET_PATHS = "\"Child Firearm Safety/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "Child-Gun-Safety-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Child Gun Safety";
-				INFOPLIST_KEY_NSCameraUsageDescription = "";
+				INFOPLIST_FILE = "Child-Firearm-Safety-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Child Firearm Safety";
+				INFOPLIST_KEY_NSCameraUsageDescription = "This app needs camera for the live feed input of the Augmented Reality";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "This app needs microphone access for the voice coach.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "This app transcribes your speech to enable the voice coach.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -478,7 +478,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Gun-Safety";
+				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Firearm-Safety";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -495,7 +495,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Gun-SafetyTests";
+				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Firearm-SafetyTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
@@ -513,7 +513,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Gun-SafetyTests";
+				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Firearm-SafetyTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
@@ -529,12 +529,12 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Gun-SafetyUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Firearm-SafetyUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "Child Gun Safety";
+				TEST_TARGET_NAME = "Child Firearm Safety";
 			};
 			name = Debug;
 		};
@@ -545,12 +545,12 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Gun-SafetyUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = "SIECapstoneTeam9.Child-Firearm-SafetyUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "Child Gun Safety";
+				TEST_TARGET_NAME = "Child Firearm Safety";
 			};
 			name = Release;
 		};
