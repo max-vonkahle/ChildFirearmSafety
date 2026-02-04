@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "50D8C4F22E81FC6400F906DF"
-               BuildableName = "Child Gun Safety.app"
-               BlueprintName = "Child Gun Safety"
-               ReferencedContainer = "container:Child Gun Safety.xcodeproj">
+               BuildableName = "Child Firearm Safety.app"
+               BlueprintName = "Child Firearm Safety"
+               ReferencedContainer = "container:Child Firearm Safety.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -36,9 +36,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "50D8C5022E81FC6500F906DF"
-               BuildableName = "Child Gun SafetyTests.xctest"
-               BlueprintName = "Child Gun SafetyTests"
-               ReferencedContainer = "container:Child Gun Safety.xcodeproj">
+               BuildableName = "Child Firearm SafetyTests.xctest"
+               BlueprintName = "Child Firearm SafetyTests"
+               ReferencedContainer = "container:Child Firearm Safety.xcodeproj">
             </BuildableReference>
          </TestableReference>
          <TestableReference
@@ -47,9 +47,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "50D8C50C2E81FC6500F906DF"
-               BuildableName = "Child Gun SafetyUITests.xctest"
-               BlueprintName = "Child Gun SafetyUITests"
-               ReferencedContainer = "container:Child Gun Safety.xcodeproj">
+               BuildableName = "Child Firearm SafetyUITests.xctest"
+               BlueprintName = "Child Firearm SafetyUITests"
+               ReferencedContainer = "container:Child Firearm Safety.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -69,9 +69,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "50D8C4F22E81FC6400F906DF"
-            BuildableName = "Child Gun Safety.app"
-            BlueprintName = "Child Gun Safety"
-            ReferencedContainer = "container:Child Gun Safety.xcodeproj">
+            BuildableName = "Child Firearm Safety.app"
+            BlueprintName = "Child Firearm Safety"
+            ReferencedContainer = "container:Child Firearm Safety.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -86,9 +86,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "50D8C4F22E81FC6400F906DF"
-            BuildableName = "Child Gun Safety.app"
-            BlueprintName = "Child Gun Safety"
-            ReferencedContainer = "container:Child Gun Safety.xcodeproj">
+            BuildableName = "Child Firearm Safety.app"
+            BlueprintName = "Child Firearm Safety"
+            ReferencedContainer = "container:Child Firearm Safety.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

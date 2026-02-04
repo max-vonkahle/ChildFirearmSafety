@@ -31,9 +31,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		50D8C4F32E81FC6400F906DF /* Child Gun Safety.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Child Gun Safety.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		50D8C5032E81FC6500F906DF /* Child Gun SafetyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Child Gun SafetyTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		50D8C50D2E81FC6500F906DF /* Child Gun SafetyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Child Gun SafetyUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		50D8C4F32E81FC6400F906DF /* Child Firearm Safety.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Child Firearm Safety.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		50D8C5032E81FC6500F906DF /* Child Firearm SafetyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Child Firearm SafetyTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		50D8C50D2E81FC6500F906DF /* Child Firearm SafetyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Child Firearm SafetyUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		50D8C5262E8355A600F906DF /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -98,9 +98,9 @@
 		50D8C4F42E81FC6400F906DF /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				50D8C4F32E81FC6400F906DF /* Child Gun Safety.app */,
-				50D8C5032E81FC6500F906DF /* Child Gun SafetyTests.xctest */,
-				50D8C50D2E81FC6500F906DF /* Child Gun SafetyUITests.xctest */,
+				50D8C4F32E81FC6400F906DF /* Child Firearm Safety.app */,
+				50D8C5032E81FC6500F906DF /* Child Firearm SafetyTests.xctest */,
+				50D8C50D2E81FC6500F906DF /* Child Firearm SafetyUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -108,9 +108,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		50D8C4F22E81FC6400F906DF /* Child Gun Safety */ = {
+		50D8C4F22E81FC6400F906DF /* Child Firearm Safety */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 50D8C5172E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Gun Safety" */;
+			buildConfigurationList = 50D8C5172E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Firearm Safety" */;
 			buildPhases = (
 				50D8C4EF2E81FC6400F906DF /* Sources */,
 				50D8C4F02E81FC6400F906DF /* Frameworks */,
@@ -123,7 +123,7 @@
 			fileSystemSynchronizedGroups = (
 				50D8C4F52E81FC6400F906DF /* Child Gun Safety */,
 			);
-			name = "Child Gun Safety";
+			name = "Child Firearm Safety";
 			packageProductDependencies = (
 				50598A1A2EA5DFF100C328BD /* FirebaseAI */,
 				50598A1C2EA5DFF100C328BD /* FirebaseAnalytics */,
@@ -131,12 +131,12 @@
 				507F0DF12F16FBF700BC3945 /* FirebaseAILogic */,
 			);
 			productName = "Child Gun Safety";
-			productReference = 50D8C4F32E81FC6400F906DF /* Child Gun Safety.app */;
+			productReference = 50D8C4F32E81FC6400F906DF /* Child Firearm Safety.app */;
 			productType = "com.apple.product-type.application";
 		};
-		50D8C5022E81FC6500F906DF /* Child Gun SafetyTests */ = {
+		50D8C5022E81FC6500F906DF /* Child Firearm SafetyTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 50D8C51A2E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Gun SafetyTests" */;
+			buildConfigurationList = 50D8C51A2E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Firearm SafetyTests" */;
 			buildPhases = (
 				50D8C4FF2E81FC6500F906DF /* Sources */,
 				50D8C5002E81FC6500F906DF /* Frameworks */,
@@ -150,16 +150,16 @@
 			fileSystemSynchronizedGroups = (
 				50D8C5062E81FC6500F906DF /* Child Gun SafetyTests */,
 			);
-			name = "Child Gun SafetyTests";
+			name = "Child Firearm SafetyTests";
 			packageProductDependencies = (
 			);
 			productName = "Child Gun SafetyTests";
-			productReference = 50D8C5032E81FC6500F906DF /* Child Gun SafetyTests.xctest */;
+			productReference = 50D8C5032E81FC6500F906DF /* Child Firearm SafetyTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		50D8C50C2E81FC6500F906DF /* Child Gun SafetyUITests */ = {
+		50D8C50C2E81FC6500F906DF /* Child Firearm SafetyUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 50D8C51D2E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Gun SafetyUITests" */;
+			buildConfigurationList = 50D8C51D2E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Firearm SafetyUITests" */;
 			buildPhases = (
 				50D8C5092E81FC6500F906DF /* Sources */,
 				50D8C50A2E81FC6500F906DF /* Frameworks */,
@@ -173,11 +173,11 @@
 			fileSystemSynchronizedGroups = (
 				50D8C5102E81FC6500F906DF /* Child Gun SafetyUITests */,
 			);
-			name = "Child Gun SafetyUITests";
+			name = "Child Firearm SafetyUITests";
 			packageProductDependencies = (
 			);
 			productName = "Child Gun SafetyUITests";
-			productReference = 50D8C50D2E81FC6500F906DF /* Child Gun SafetyUITests.xctest */;
+			productReference = 50D8C50D2E81FC6500F906DF /* Child Firearm SafetyUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -203,7 +203,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 50D8C4EE2E81FC6400F906DF /* Build configuration list for PBXProject "Child Gun Safety" */;
+			buildConfigurationList = 50D8C4EE2E81FC6400F906DF /* Build configuration list for PBXProject "Child Firearm Safety" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -220,9 +220,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				50D8C4F22E81FC6400F906DF /* Child Gun Safety */,
-				50D8C5022E81FC6500F906DF /* Child Gun SafetyTests */,
-				50D8C50C2E81FC6500F906DF /* Child Gun SafetyUITests */,
+				50D8C4F22E81FC6400F906DF /* Child Firearm Safety */,
+				50D8C5022E81FC6500F906DF /* Child Firearm SafetyTests */,
+				50D8C50C2E81FC6500F906DF /* Child Firearm SafetyUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -278,12 +278,12 @@
 /* Begin PBXTargetDependency section */
 		50D8C5052E81FC6500F906DF /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 50D8C4F22E81FC6400F906DF /* Child Gun Safety */;
+			target = 50D8C4F22E81FC6400F906DF /* Child Firearm Safety */;
 			targetProxy = 50D8C5042E81FC6500F906DF /* PBXContainerItemProxy */;
 		};
 		50D8C50F2E81FC6500F906DF /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 50D8C4F22E81FC6400F906DF /* Child Gun Safety */;
+			target = 50D8C4F22E81FC6400F906DF /* Child Firearm Safety */;
 			targetProxy = 50D8C50E2E81FC6500F906DF /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -500,7 +500,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Child Gun Safety.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Child Gun Safety";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Child Firearm Safety.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Child Firearm Safety";
 			};
 			name = Debug;
 		};
@@ -518,7 +518,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Child Gun Safety.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Child Gun Safety";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Child Firearm Safety.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Child Firearm Safety";
 			};
 			name = Release;
 		};
@@ -557,7 +557,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		50D8C4EE2E81FC6400F906DF /* Build configuration list for PBXProject "Child Gun Safety" */ = {
+		50D8C4EE2E81FC6400F906DF /* Build configuration list for PBXProject "Child Firearm Safety" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				50D8C5152E81FC6500F906DF /* Debug */,
@@ -566,7 +566,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		50D8C5172E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Gun Safety" */ = {
+		50D8C5172E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Firearm Safety" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				50D8C5182E81FC6500F906DF /* Debug */,
@@ -575,7 +575,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		50D8C51A2E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Gun SafetyTests" */ = {
+		50D8C51A2E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Firearm SafetyTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				50D8C51B2E81FC6500F906DF /* Debug */,
@@ -584,7 +584,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		50D8C51D2E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Gun SafetyUITests" */ = {
+		50D8C51D2E81FC6500F906DF /* Build configuration list for PBXNativeTarget "Child Firearm SafetyUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				50D8C51E2E81FC6500F906DF /* Debug */,
