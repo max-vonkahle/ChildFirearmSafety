@@ -64,7 +64,7 @@ struct HomeView: View {
                         Label("Load Testing Room", systemImage: "square.and.arrow.up")
                     }
                 } label: {
-                    Label("Testing Setup", systemImage: "square.3d.down.right")
+                    Label("Testing Setup", systemImage: "cube")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()

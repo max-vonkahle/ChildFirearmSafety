@@ -27,6 +27,9 @@ final class LiveMicController {
     var onSpeechStart: (() -> Void)?
     var onSpeechEnd: (() -> Void)?
 
+    /// Called when a long pause is detected and we're finalizing the user's turn
+    var onTurnComplete: ((String) -> Void)?  // Passes the transcript
+
     // MARK: - Private state
 
     private let engine = AVAudioEngine()
@@ -51,10 +54,13 @@ final class LiveMicController {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var lastPrintedTranscript: String = ""
 
-    // Client-side VAD: Stop sending audio after detecting a pause
-    private var pauseDetectionTimer: Task<Void, Never>?
-    private let pauseThreshold: TimeInterval = 1.2  // 1.2 seconds of no new speech = pause
-    private var isStreamingAudio = true  // Track if we should send audio chunks
+    // Two-tier VAD system:
+    // - Short pause for UI feedback (1.2s)
+    // - Long pause to signal end-of-turn to Gemini (3.0s)
+    private var shortPauseTimer: Task<Void, Never>?
+    private var longPauseTimer: Task<Void, Never>?
+    private let shortPauseThreshold: TimeInterval = 1.2  // UI feedback
+    private let longPauseThreshold: TimeInterval = 3.0   // End turn and let Gemini respond
 
     // MARK: - Public API
 
@@ -63,7 +69,6 @@ final class LiveMicController {
         guard !isRunning else { return }
 
         currentClient = client
-        isStreamingAudio = true  // Reset VAD state for new turn
 
         Task {
             do {
@@ -111,8 +116,10 @@ final class LiveMicController {
 
             Task { @MainActor in
                 self.converter = nil
-                self.pauseDetectionTimer?.cancel()
-                self.pauseDetectionTimer = nil
+                self.shortPauseTimer?.cancel()
+                self.shortPauseTimer = nil
+                self.longPauseTimer?.cancel()
+                self.longPauseTimer = nil
                 self.stopSpeechRecognition()
             }
 
@@ -284,11 +291,9 @@ final class LiveMicController {
         }
         #endif
 
-        // Stream the PCM chunk into Gemini Live (only if not paused by VAD)
+        // Stream the PCM chunk into Gemini Live (always send, let server-side VAD handle turn detection)
         Task { @MainActor in
-            if self.isStreamingAudio {
-                await client.sendAudioChunk(pcmData)
-            }
+            await client.sendAudioChunk(pcmData)
         }
     }
 
@@ -351,23 +356,42 @@ final class LiveMicController {
                         self.lastPrintedTranscript = text
                         print("🗣️ [LiveMic][debug ASR] \(text)")
 
-                        // If we had paused but user is speaking again, resume streaming
-                        if !self.isStreamingAudio {
-                            self.isStreamingAudio = true
-                            print("▶️ [LiveMic] User resumed speaking - streaming audio again")
+                        // Cancel any existing pause timers and start new ones
+                        self.shortPauseTimer?.cancel()
+                        self.longPauseTimer?.cancel()
+
+                        // Short pause timer: UI feedback only
+                        self.shortPauseTimer = Task { @MainActor in
+                            do {
+                                try await Task.sleep(for: .seconds(self.shortPauseThreshold))
+                                print("🔇 [LiveMic] Short pause detected after \(self.shortPauseThreshold)s (UI feedback only)")
+                            } catch {
+                                // Timer was cancelled (user spoke again)
+                            }
                         }
 
-                        // Cancel any existing pause timer and start a new one
-                        self.pauseDetectionTimer?.cancel()
-                        self.pauseDetectionTimer = Task { @MainActor in
+                        // Long pause timer: Stop mic and signal end-of-turn to Gemini
+                        self.longPauseTimer = Task { @MainActor in
                             do {
-                                // Wait for pause threshold
-                                try await Task.sleep(for: .seconds(self.pauseThreshold))
+                                try await Task.sleep(for: .seconds(self.longPauseThreshold))
 
-                                // If we reach here, user has paused - stop streaming audio
-                                if self.isStreamingAudio {
-                                    self.isStreamingAudio = false
-                                    print("🔇 [LiveMic] Pause detected after \(self.pauseThreshold)s - stopped sending audio")
+                                // Check if mic is still running (might have been stopped by Gemini responding)
+                                guard self.isRunning else {
+                                    print("⏹️ [LiveMic] Long pause timer fired but mic already stopped - ignoring")
+                                    return
+                                }
+
+                                print("⏹️ [LiveMic] Long pause detected after \(self.longPauseThreshold)s - finalizing turn")
+
+                                // Capture transcript before stopping
+                                let finalTranscript = self.lastPrintedTranscript
+
+                                // Stop the mic
+                                self.stop()
+
+                                // Notify that the turn is complete with the transcript
+                                if !finalTranscript.isEmpty {
+                                    self.onTurnComplete?(finalTranscript)
                                 }
                             } catch {
                                 // Timer was cancelled (user spoke again)

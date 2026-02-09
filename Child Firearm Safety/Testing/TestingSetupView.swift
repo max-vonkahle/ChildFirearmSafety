@@ -156,7 +156,7 @@ struct TestingSetupView: View {
             Button {
                 setupState.placeKitchenAction?()
             } label: {
-                Label("Place", systemImage: "square.3d.down.right")
+                Label("Place", systemImage: "cube")
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(Color.blue.opacity(0.25))
                     .cornerRadius(12)

@@ -153,8 +153,25 @@ final class GeminiFlashLiveClient {
             print("🎙 [Live] sending audio chunk: \(data.count) bytes")
         }
         #endif
-        
+
         await session.sendAudioRealtime(data)
+    }
+
+    /// Send a text message to the current session (e.g., to signal end-of-turn)
+    @MainActor
+    func sendText(_ text: String) async {
+        guard let session else {
+            #if DEBUG
+            print("🟥 [Live] sendText called but session is nil")
+            #endif
+            return
+        }
+
+        #if DEBUG
+        print("📤 [Live] sending text: \(text)")
+        #endif
+
+        await session.sendTextRealtime(text)
     }
 
     /// Internal helper to start an audio-driven turn (no initial text).

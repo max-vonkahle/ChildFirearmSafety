@@ -17,21 +17,17 @@ final class LiveAudioPlayer {
     // Background queue for audio operations to prevent main thread blocking
     private let audioQueue = DispatchQueue(label: "com.childgunsafety.audioplayback", qos: .userInteractive)
 
+    // Peak normalization settings
+    private var normalizationEnabled = true
+    private let targetPeakLevel: Float = 0.8
+    private let minPeakThreshold: Float = 0.05
+
     // Track scheduled vs completed buffers to know when playback finishes
     private var scheduledBuffers = 0
     private var completedBuffers = 0
     private var playbackCompletionHandler: (() -> Void)?
 
     private init() {
-        // Configure audio session for spoken audio playback.
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try session.setActive(true)
-        } catch {
-            // print("[Audio] AVAudioSession error:", error)
-        }
-
         // Use a fixed 24 kHz mono float format for live Gemini audio.
         guard let liveFormat = AVAudioFormat(
             standardFormatWithSampleRate: 24_000,
@@ -53,6 +49,45 @@ final class LiveAudioPlayer {
         } catch {
             // print("[Audio] Failed to start engine:", error)
         }
+    }
+
+    private func normalizeBuffer(_ buffer: AVAudioPCMBuffer) {
+        guard normalizationEnabled else { return }
+        guard let channelData = buffer.floatChannelData else { return }
+
+        let frameCount = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+
+        // Find peak amplitude
+        var peak: Float = 0.0
+        for ch in 0..<channelCount {
+            let channel = channelData[ch]
+            for i in 0..<frameCount {
+                peak = max(peak, abs(channel[i]))
+            }
+        }
+
+        // Only normalize if peak is significant
+        guard peak > minPeakThreshold else { return }
+
+        // Calculate gain with soft limiting
+        let gain = targetPeakLevel / peak
+        let maxGain: Float = 4.0  // Max 12dB boost
+        let effectiveGain = min(gain, maxGain)
+
+        // Apply gain to all channels
+        for ch in 0..<channelCount {
+            let channel = channelData[ch]
+            for i in 0..<frameCount {
+                channel[i] *= effectiveGain
+            }
+        }
+
+        #if DEBUG
+        if effectiveGain > 1.5 || effectiveGain < 0.7 {
+            print("[Audio] Normalized: peak=\(peak) → gain=\(effectiveGain)x")
+        }
+        #endif
     }
 
     /// Play a chunk of raw PCM16 mono audio.
@@ -107,6 +142,9 @@ final class LiveAudioPlayer {
                     )
                 }
             }
+
+            // Apply peak normalization
+            self.normalizeBuffer(buffer)
 
             if !self.engine.isRunning {
                 do {

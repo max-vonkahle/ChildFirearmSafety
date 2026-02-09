@@ -20,7 +20,10 @@ enum RoomLibrary {
         let names: [String] = urls.compactMap { url in
             guard url.pathExtension.lowercased() == "arworldmap" else { return nil }
             var base = url.deletingPathExtension().lastPathComponent
-            if base.hasPrefix("room_") { base.removeFirst("room_".count) }
+
+            // Only return training rooms (those starting with "room_")
+            guard base.hasPrefix("room_") else { return nil }
+            base.removeFirst("room_".count)
             return base
         }
         return names.sorted()
@@ -142,7 +145,10 @@ enum RoomLibrary {
             // Look for .arworldmap files (new format) or .testroom files (legacy)
             guard url.pathExtension.lowercased() == "arworldmap" || url.pathExtension.lowercased() == "testroom" else { return nil }
             var base = url.deletingPathExtension().lastPathComponent
-            if base.hasPrefix("testing_") { base.removeFirst("testing_".count) }
+
+            // Only return testing rooms (those starting with "testing_")
+            guard base.hasPrefix("testing_") else { return nil }
+            base.removeFirst("testing_".count)
             return base
         }
         return Array(Set(names)).sorted() // Remove duplicates and sort

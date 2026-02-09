@@ -49,21 +49,73 @@ final class VoiceCoach: ObservableObject {
     private func setupMicCallbacks() {
         LiveMicController.shared.onSpeechStart = { [weak self] in
             Task { @MainActor in
-                self?.state = .listening
+                guard let self else { return }
+
+                // Ignore speech callbacks if mic was stopped for Gemini's response
+                // This prevents buffered speech recognition from restarting the mic
+                if self.micStoppedForCurrentTurn {
+                    print("🎙️ [VC] Speech detected but ignoring (Gemini is responding)")
+                    return
+                }
+
+                // Keep state as .listening - we're continuously streaming audio to Gemini
+                if self.state != .speaking {
+                    self.state = .listening
+                }
                 print("🎙️ [VC] User started speaking")
             }
         }
-        
+
         LiveMicController.shared.onSpeechEnd = { [weak self] in
             Task { @MainActor in
-                self?.state = .thinking
-                print("🔇 [VC] User stopped speaking, waiting for response...")
+                guard let self else { return }
+
+                // Ignore if Gemini is responding
+                if self.micStoppedForCurrentTurn {
+                    return
+                }
+
+                // With continuous streaming, don't change state on pause detection
+                // The state will change to .thinking/.speaking when Gemini actually responds
+                print("🔇 [VC] User paused speaking (audio still streaming to Gemini)")
             }
         }
-        
+
         LiveMicController.shared.onError = { [weak self] error in
             Task { @MainActor in
                 self?.transcript.append("\n[mic error] \(error.localizedDescription)")
+            }
+        }
+
+        LiveMicController.shared.onTurnComplete = { [weak self] userTranscript in
+            Task { @MainActor in
+                guard let self else { return }
+
+                // Ignore if we already stopped for Gemini's response
+                if self.micStoppedForCurrentTurn {
+                    print("⚠️ [VC] Turn complete callback ignored - mic already stopped for Gemini's response")
+                    return
+                }
+
+                // Ignore if conversation isn't active (might be shutting down)
+                if !self.isConversationActive {
+                    print("⚠️ [VC] Turn complete callback ignored - conversation not active")
+                    return
+                }
+
+                // Ignore if a turn is already in flight
+                if self.isTurnInFlight {
+                    print("⚠️ [VC] Turn complete callback ignored - turn already in flight")
+                    return
+                }
+
+                print("📝 [VC] Turn complete with transcript: \(userTranscript)")
+                self.state = .thinking
+                self.isTurnInFlight = true
+
+                // Send the transcript to Gemini to explicitly signal end-of-turn
+                // This helps trigger Gemini's response since its VAD doesn't always work
+                await self.live.sendText("User said: \(userTranscript)")
             }
         }
     }
@@ -82,6 +134,7 @@ final class VoiceCoach: ObservableObject {
     func startSession() {
         Task { @MainActor in
             do {
+                try AudioSessionManager.shared.configure(for: .duplexVoice)
                 try VoicePerms.activateAudioSession()
                 try await VoicePerms.requestMicrophone()
                 try await VoicePerms.requestSpeech()
@@ -216,8 +269,11 @@ final class VoiceCoach: ObservableObject {
                 // Gate the mic so the model does not hear its own audio.
                 Task { @MainActor in
                     if !self.micStoppedForCurrentTurn {
-                        print("🔇 [VC] Stopping mic for model audio")
+                        print("🔇 [VC] Stopping mic - Gemini is responding")
                         self.micStoppedForCurrentTurn = true
+                        // Brief thinking state while transitioning from listening to speaking
+                        self.state = .thinking
+                        try? AudioSessionManager.shared.configure(for: .playbackOnly)
                     }
                 }
 
@@ -241,8 +297,6 @@ final class VoiceCoach: ObservableObject {
                         Task { @MainActor in
                             guard let self else { return }
                             print("✅ [VC] audio playback complete, waiting for echo to subside...")
-                            // Longer delay to let acoustic echo fully dissipate
-                            // This prevents the mic from picking up residual audio that confuses VAD
                             try? await Task.sleep(for: .milliseconds(1000))
                             print("✅ [VC] resuming mic after echo delay")
                             self.resumeListening()
@@ -284,6 +338,7 @@ final class VoiceCoach: ObservableObject {
             return
         }
 
+        try? AudioSessionManager.shared.configure(for: .duplexVoice)
         isConversationActive = true
         state = .listening
         VoicePerms.setModeListening()

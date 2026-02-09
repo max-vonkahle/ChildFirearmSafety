@@ -280,8 +280,22 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         session.pause()
     }
 
+    private func clearPixelBuffers() {
+        frameLock.lock()
+        currentPixelBuffer = nil
+        currentSegmentationBuffer = nil
+        frameLock.unlock()
+
+        CVMetalTextureCacheFlush(textureCache, 0)
+
+        #if DEBUG
+        print("🗑️ [Stereo] Cleared pixel buffer references")
+        #endif
+    }
+
     deinit {
         relocalizationTimer?.invalidate()
+        clearPixelBuffers()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -392,13 +406,17 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 modelNode.scale = SCNVector3(scale, scale, scale)
             }
 
-            // Rotate to lay flat (match ARCoordinator's layFlat) only if not a table
-            if assetName != "table" {
+            // Rotate to lay flat (match ARCoordinator's layFlat)
+            if assetName == "gun" {
+                // Gun needs Z-axis rotation to lay flat (match ARCoordinator line 418)
+                let rotation = SCNMatrix4MakeRotation(.pi / 2, 0, 0, 1)
+                modelNode.transform = SCNMatrix4Mult(rotation, modelNode.transform)
+            } else if assetName == "table" {
+                // Table needs X-axis rotation to lay flat
                 let rotation = SCNMatrix4MakeRotation(-.pi / 2, 1, 0, 0)
                 modelNode.transform = SCNMatrix4Mult(rotation, modelNode.transform)
-            }
-            // Rotate table to lay flat in stereo mode
-            if assetName == "table" {
+            } else {
+                // Other objects use standard X-axis rotation
                 let rotation = SCNMatrix4MakeRotation(-.pi / 2, 1, 0, 0)
                 modelNode.transform = SCNMatrix4Mult(rotation, modelNode.transform)
             }
@@ -999,18 +1017,20 @@ extension StereoARViewController: MTKViewDelegate {
             return
         }
 
-        // Add completion handler to flush texture cache periodically
-        commandBuffer.addCompletedHandler { [weak self] _ in
-            guard let self = self else { return }
-            self.frameCounter += 1
-            if self.frameCounter % 6 == 0 {  // Less frequent flushing
-                CVMetalTextureCacheFlush(self.textureCache, 0)
-            }
-        }
-
         // Determine if this is left or right eye
         let isLeftEye = (view === leftMetalView)
         let stereoOffsetValue = Float(stereoOffset)
+
+        // Add completion handler to flush texture cache periodically (only for left eye to avoid redundant flushes)
+        if isLeftEye {
+            commandBuffer.addCompletedHandler { [weak self] _ in
+                guard let self = self else { return }
+                self.frameCounter += 1
+                if self.frameCounter % 6 == 0 {
+                    CVMetalTextureCacheFlush(self.textureCache, 0)
+                }
+            }
+        }
 
         // Create vertex data for a full-screen quad with stereo offset
         let leftOffset: Float = isLeftEye ? 0.0 : stereoOffsetValue
@@ -1066,9 +1086,9 @@ extension StereoARViewController: MTKViewDelegate {
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
 
-        // Determine if this is left or right eye
-        let isLeftEye = (view === leftOcclusionView)
-        let stereoOffsetValue = Float(stereoOffset)
+            // Determine if this is left or right eye
+            let isLeftEye = (view === leftOcclusionView)
+            let stereoOffsetValue = Float(stereoOffset)
 
         // Same stereo offset as passthrough
         let leftOffset: Float = isLeftEye ? 0.0 : stereoOffsetValue
