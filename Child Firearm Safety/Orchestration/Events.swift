@@ -10,7 +10,7 @@ import Foundation
 
 // === Cross-layer events ===
 enum SessionPhase {
-    case onboarding, exploration, encounterPending, praisePath, coachingPath, reflection, wrapup
+    case onboarding, exploration, encounterPending, praisePath, coachingPath, resetLoop, reflection, wrapup
 }
 
 enum AREvent {
@@ -19,6 +19,7 @@ enum AREvent {
     case reachGesture
     case childBacksAway(delta: Float)
     case mappingProgress(percent: Float)
+    case userTappedToReset  // User tapped screen to confirm they're back at starting position
 }
 
 enum VCIntent {
@@ -34,6 +35,8 @@ enum DialogueIntent {
     case neutralExplorationPrompt(area: String?)           // "desk", "window", ...
     case praiseBackedAway
     case coachDontTouchWhy
+    case instructReset
+    case postResetEncouragement                             // After user taps to reset
     case answerWhatIsThat_safety
     case answerIsThatReal_safety
     case reflectionQ1
@@ -41,7 +44,13 @@ enum DialogueIntent {
 
 // === Notification names (quick bus you already use) ===
 extension Notification.Name {
-    // AR → Orchestrator
+    // AR → Orchestrator (TRAINING MODE ONLY)
+    static let arTrainingEvent = Notification.Name("arTrainingEvent")
+
+    // AR → TestingOrchestrator (TESTING MODE ONLY)
+    static let arTestingEvent = Notification.Name("arTestingEvent")
+
+    // AR → Orchestrator (DEPRECATED - use arTrainingEvent or arTestingEvent)
     static let arEvent = Notification.Name("arEvent")
 
     // VoiceCoach → Orchestrator

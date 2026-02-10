@@ -84,9 +84,9 @@ final class LiveAudioPlayer {
         }
 
         #if DEBUG
-        if effectiveGain > 1.5 || effectiveGain < 0.7 {
-            print("[Audio] Normalized: peak=\(peak) → gain=\(effectiveGain)x")
-        }
+//        if effectiveGain > 1.5 || effectiveGain < 0.7 {
+//            print("[Audio] Normalized: peak=\(peak) → gain=\(effectiveGain)x")
+//        }
         #endif
     }
 

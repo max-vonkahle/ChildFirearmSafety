@@ -302,7 +302,7 @@ final class GeminiFlashLiveClient {
 
             // High-level info for each content message
             #if DEBUG
-            print("🟣 [Live] content: modelTurn? \(serverContent.modelTurn != nil), turnComplete: \(serverContent.isTurnComplete)")
+            // print("🟣 [Live] content: modelTurn? \(serverContent.modelTurn != nil), turnComplete: \(serverContent.isTurnComplete)")
             #endif
 
             // 1) Model turn content, if present.
@@ -329,7 +329,7 @@ final class GeminiFlashLiveClient {
                         if mime.hasPrefix("audio/pcm") {
                             let rate = Self.sampleRate(from: inlinePart.mimeType) ?? 24_000
                             #if DEBUG
-                            print("🔊 [LLM ← audio] \(inlinePart.data.count) bytes @ \(rate) Hz")
+                            // print("🔊 [LLM ← audio] \(inlinePart.data.count) bytes @ \(rate) Hz")
                             #endif
                             pendingSampleRate = rate
                             pendingAudio.append(inlinePart.data)

@@ -45,6 +45,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var modelRoots: [String: Entity] = [:]
     private var placedAnchors: [AnchorEntity] = []
     private var placedARAnchors: [ARAnchor] = []
+    private var savedGunAnchors: [(visual: AnchorEntity, ar: ARAnchor)] = []
     private var currentAsset: String? = nil
     private var hasNotifiedAssetsConfigured = false  // Ensure notification fires only once
 
@@ -60,6 +61,13 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var wasNear: Bool = false
     private var lastNearDistance: Float = 0
     private var lastNearTime: CFTimeInterval = 0
+
+    // Frame-based deduplication for reach gestures
+    private var lastReachGestureFrame: Int = 0  // Track which frame posted reach gesture
+    private var currentFrameNumber: Int = 0      // Increment each frame
+
+    // Reset instruction state
+    private var isWaitingForResetSpeech: Bool = false  // Don't allow taps until speech completes
 
     // Tuning knobs
     private let pixelPadding: CGFloat = 24        // expands gun rect in screen px
@@ -98,12 +106,21 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             }
             self.loadWorldMap(roomId: effectiveId)
         }
-        // Listen for AR commands (e.g., hide gun)
+        // Listen for AR commands (e.g., hide/show gun)
         NotificationCenter.default.addObserver(forName: .arCommand, object: nil, queue: .main) { [weak self] note in
             guard let self = self else { return }
             let arg = note.userInfo?[BusKey.arg] as? String
+            print("🔫 [AR] Received AR command: \(arg ?? "nil")")
             if arg == "setGunVisibility:false" {
                 self.setGunVisible(false)
+            } else if arg == "setGunVisibility:true" {
+                self.setGunVisible(true)
+            } else if arg == "disableTapDuringSpeech" {
+                print("🔇 [AR] Disabling tap (model speaking reset instruction)")
+                self.isWaitingForResetSpeech = true
+            } else if arg == "enableTapAfterSpeech" {
+                print("🔊 [AR] Enabling tap (model finished speaking)")
+                self.isWaitingForResetSpeech = false
             }
         }
     }
@@ -151,6 +168,9 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         isProcessingFrame = true
         defer { isProcessingFrame = false }
 
+        // Increment frame counter
+        currentFrameNumber += 1
+
         guard let arView = arView,
               let frame = arView.session.currentFrame,
               !placedAnchors.isEmpty,  // Check if any anchors are placed
@@ -171,13 +191,13 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                     wasNear = true
                     lastNearDistance = d
                     lastNearTime = tNow
-                    NotificationCenter.default.post(name: .arEvent, object: nil,
+                    NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
                         userInfo: [BusKey.arevent: AREvent.gunProximityNear(distance: d)])
                 }
                 // Detect backing away within a short window
                 if wasNear, d - lastNearDistance > 0.7, tNow - lastNearTime < 3.0 {
                     wasNear = false
-                    NotificationCenter.default.post(name: .arEvent, object: nil,
+                    NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
                         userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: d - lastNearDistance)])
                 }
                 // Update running minimum distance while in near state
@@ -214,10 +234,17 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                        let gunZ = gunDistanceFromCamera(frame: frame),
                        handZ + depthMargin < gunZ {
 
+                        // Extra safety: prevent duplicate events in same frame (multiple hands)
+                        guard currentFrameNumber != lastReachGestureFrame else {
+                            print("⏭️ [AR] Reach gesture already posted in frame \(currentFrameNumber), skipping additional hand")
+                            continue
+                        }
+                        lastReachGestureFrame = currentFrameNumber
+
                         warningShown = true
                         setGunVisible(false)
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        NotificationCenter.default.post(name: .arEvent, object: nil, userInfo: [BusKey.arevent: AREvent.reachGesture])
+                        NotificationCenter.default.post(name: .arTrainingEvent, object: nil, userInfo: [BusKey.arevent: AREvent.reachGesture])
                         return
                     }
                 }
@@ -225,14 +252,31 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
 
-    // MARK: - Tap to place or move (only when armed)
+    // MARK: - Tap gesture handler
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
-        guard let arView = arView else { return }
-        if !isArmed {
-            // If tapping near gun while unarmed, treat as reach proxy
-            if let rect = gunScreenRect(), rect.contains(sender.location(in: arView)) {
-                NotificationCenter.default.post(name: .arEvent, object: nil, userInfo: [BusKey.arevent: AREvent.reachGesture])
+        print("👆 [AR] TAP DETECTED - warningShown: \(warningShown), isArmed: \(isArmed), savedGunAnchors: \(savedGunAnchors.count), waitingForSpeech: \(isWaitingForResetSpeech)")
+
+        guard let arView = arView else {
+            print("❌ [AR] No arView, ignoring tap")
+            return
+        }
+
+        // If gun is hidden (warningShown), user is tapping to confirm reset
+        if warningShown {
+            // Check if we're still waiting for reset instruction speech to complete
+            if isWaitingForResetSpeech {
+                print("⏭️ [AR] Tap ignored - waiting for model to finish speaking")
+                return
             }
+
+            print("✅ [AR] User tapped to confirm reset - posting userTappedToReset event")
+            NotificationCenter.default.post(name: .arTrainingEvent, object: nil, userInfo: [BusKey.arevent: AREvent.userTappedToReset])
+            return
+        }
+
+        // Only allow taps when armed for asset placement
+        guard isArmed else {
+            print("⏭️ [AR] Tap ignored - not armed and warningShown is false")
             return
         }
 
@@ -378,11 +422,24 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 arView.scene.addAnchor(entityAnchor)
                 placedAnchors.append(entityAnchor)
 
-                // Allow future warnings again
-                warningShown = false
+                // Handle gun restoration specially during reset mode
+                if asset == "gun" && !savedGunAnchors.isEmpty {
+                    print("⚠️ [AR] Gun anchor restored during relocalization, but gun should stay hidden (in reset mode)")
+                    // Remove the anchor we just added - gun should stay hidden
+                    arView.scene.removeAnchor(entityAnchor)
+                    if let last = placedAnchors.last {
+                        placedAnchors.removeLast()
+                    }
+                } else {
+                    print("Restored \(asset) at saved position")
+                    restoredAnyAsset = true
 
-                print("Restored \(asset) at saved position")
-                restoredAnyAsset = true
+                    // Only reset warningShown if gun is not currently hidden
+                    // Don't reset during reset mode (when savedGunAnchors has items)
+                    if savedGunAnchors.isEmpty {
+                        warningShown = false
+                    }
+                }
             }
         }
 
@@ -545,29 +602,78 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     func setGunVisible(_ visible: Bool) {
-        if visible { return } // v1 only supports hiding; showing would require re-anchoring
+        print("🔫 [AR] setGunVisible(\(visible)) called - current warningShown: \(warningShown)")
 
-        // Find and remove only gun anchors
+        if visible {
+            // Show gun - restore from saved anchors
+            print("🔫 [AR] Attempting to show gun. Saved anchors count: \(savedGunAnchors.count)")
+            guard let arView = arView, !savedGunAnchors.isEmpty else {
+                print("🔫 [AR] ⚠️ Cannot show gun: arView=\(arView != nil), savedAnchors empty=\(savedGunAnchors.isEmpty)")
+                return
+            }
+
+            for saved in savedGunAnchors {
+                let pos = saved.ar.transform.columns.3
+                print("🔫 [AR] Restoring gun at position: (\(pos.x), \(pos.y), \(pos.z))")
+
+                // Re-add visual anchor to scene
+                arView.scene.addAnchor(saved.visual)
+                placedAnchors.append(saved.visual)
+
+                // Re-add AR anchor to session
+                arView.session.add(anchor: saved.ar)
+                placedARAnchors.append(saved.ar)
+            }
+
+            // Clear saved anchors
+            savedGunAnchors.removeAll()
+            warningShown = false
+            lastReachGestureFrame = 0  // Allow detection on next encounter
+            print("🔫 [AR] ✅ Gun restored to scene - warningShown now: \(warningShown)")
+            return
+        }
+
+        // Hide gun - save anchors before removing
+        print("🔫 [AR] Hiding gun...")
         var indicesToRemove: [Int] = []
+
+        // Find gun anchors
         for (index, arAnchor) in placedARAnchors.enumerated() {
             if arAnchor.name?.contains("_gun") == true {
                 indicesToRemove.append(index)
             }
         }
 
-        // Remove in reverse order to maintain correct indices
+        print("🔫 [AR] Found \(indicesToRemove.count) gun anchors to hide")
+
+        // Only proceed if there are gun anchors to hide
+        guard !indicesToRemove.isEmpty else {
+            print("🔫 [AR] ⚠️ No gun anchors to hide (already hidden?). Keeping \(savedGunAnchors.count) saved anchors intact.")
+            return
+        }
+
+        // Clear saved anchors only when we have new ones to save
+        savedGunAnchors.removeAll()
+
+        // Save and remove in reverse order to maintain correct indices
         for index in indicesToRemove.reversed() {
-            if index < placedAnchors.count {
+            if index < placedAnchors.count && index < placedARAnchors.count {
+                // Save before removing
+                savedGunAnchors.append((visual: placedAnchors[index], ar: placedARAnchors[index]))
+
+                // Remove from scene and session
                 arView?.scene.removeAnchor(placedAnchors[index])
-                placedAnchors.remove(at: index)
-            }
-            if index < placedARAnchors.count {
                 arView?.session.remove(anchor: placedARAnchors[index])
+
+                // Remove from tracking arrays
+                placedAnchors.remove(at: index)
                 placedARAnchors.remove(at: index)
             }
         }
 
-        warningShown = false
+        print("🔫 [AR] ✅ Gun hidden. Saved \(savedGunAnchors.count) anchors for later restoration")
+        warningShown = true  // Set to true so taps will be detected for reset
+        print("🔫 [AR] warningShown set to TRUE (gun is hidden, waiting for tap)")
     }
 
     func currentImageOrientation() -> CGImagePropertyOrientation {

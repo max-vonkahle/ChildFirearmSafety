@@ -153,6 +153,10 @@ struct OrchestratorView: View {
     }
 
     private func cleanup() {
+        // Explicitly clean up VoiceCoach and Orchestrator observers
+        coach.cleanup()
+        orch.cleanup()
+
         NotificationCenter.default.removeObserver(self, name: .assetsConfigured, object: nil)
         hasConfiguredObserver = false
         showHeadsetInstruction = false
@@ -168,6 +172,7 @@ struct OrchestratorView: View {
         case .encounterPending: return "Encounter"
         case .praisePath: return "Praise"
         case .coachingPath: return "Coaching"
+        case .resetLoop: return "Resetting"
         case .reflection: return "Reflection"
         case .wrapup: return "Wrap-up"
         }

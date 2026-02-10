@@ -17,6 +17,10 @@ struct TestingOrchestratorView: View {
     @State private var sceneReady = false
     @State private var selectedRoomId: String? = nil
     @State private var roomNames: [String] = RoomLibrary.savedTestingRooms()
+    @State private var resetAttempts: Int = 0
+    private let maxResetAttempts: Int = 3
+    @State private var arEventObserver: NSObjectProtocol?
+    @State private var lastReachGestureTime: Date?
 
     var body: some View {
         Group {
@@ -124,6 +128,72 @@ struct TestingOrchestratorView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .navigationBarBackButtonHidden(true)
+            .onAppear {
+                // Listen for reach gesture events (TESTING MODE ONLY)
+                // Note: Currently testing mode has no gesture detection, so this may never fire
+                // If you implement gesture detection for testing, it should post to .arTestingEvent
+                arEventObserver = NotificationCenter.default.addObserver(
+                    forName: .arTestingEvent,
+                    object: nil,
+                    queue: .main
+                ) { [self] note in
+                    guard let event = note.userInfo?[BusKey.arevent] as? AREvent else { return }
+                    if case .reachGesture = event {
+                        handleReachGesture()
+                    }
+                }
+            }
+            .onDisappear {
+                // CRITICAL: Remove observer to prevent receiving events when not active
+                if let observer = arEventObserver {
+                    NotificationCenter.default.removeObserver(observer)
+                    arEventObserver = nil
+                }
+            }
+        }
+    }
+
+    private func handleReachGesture() {
+        // Time-based deduplication (safety net)
+        let now = Date()
+        if let lastTime = lastReachGestureTime,
+           now.timeIntervalSince(lastTime) < 0.5 {
+            print("⏭️ [Testing] Duplicate reach gesture within 0.5s, ignoring")
+            return
+        }
+        lastReachGestureTime = now
+
+        resetAttempts += 1
+        print("🔄 [Testing] Child reached for gun. Attempt \(resetAttempts)/\(maxResetAttempts)")
+
+        // Hide gun via AR command
+        NotificationCenter.default.post(
+            name: .arCommand,
+            object: nil,
+            userInfo: [BusKey.arg: "setGunVisibility:false"]
+        )
+
+        // Send context to voice coach
+        let context = """
+        The child reached for the gun during testing. Tell them:
+        1. That was incorrect
+        2. They should not touch the gun
+        3. Step back and try again from the beginning
+        """
+        coach.injectContext(context)
+
+        // Wait for user to tap screen to confirm they're ready (manual reset)
+        if resetAttempts < maxResetAttempts {
+            print("🔄 [Testing] Waiting for user tap to reset...")
+            // Note: In testing mode, if you want manual tap reset, you'd need to implement
+            // tap detection similar to training mode. For now, this remains as-is.
+        } else {
+            // Max attempts - end test after coaching
+            print("🔄 [Testing] Max attempts reached, ending test")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
+                coach.stopSession()
+                selectedRoomId = nil
+            }
         }
     }
 }

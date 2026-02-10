@@ -23,6 +23,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Model templates and placed nodes (for loading saved rooms)
     private var modelTemplates: [String: SCNNode] = [:]  // asset name -> template node
     private var placedNodes: [SCNNode] = []  // All placed asset nodes
+    private var gunNode: SCNNode?  // Track gun node for hide/show
     private var hasNotifiedAssetsConfigured = false  // Ensure notification fires only once
 
     // Testing mode support
@@ -108,6 +109,14 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             self,
             selector: #selector(handleLoadWorldMap(_:)),
             name: .loadWorldMap,
+            object: nil
+        )
+
+        // --- Listen for AR commands (hide/show gun) ---
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleARCommand(_:)),
+            name: .arCommand,
             object: nil
         )
 
@@ -350,6 +359,11 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 scene.rootNode.addChildNode(containerNode)
                 placedNodes.append(containerNode)
 
+                // Store gun node reference for hide/show
+                if assetName.contains("gun") {
+                    gunNode = containerNode
+                }
+
                 print("\(assetName) model restored at saved position in stereo mode")
                 restoredAnyAsset = true
             } else {
@@ -466,6 +480,23 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         } catch {
             print("Failed to load world map in stereo mode:", error)
         }
+    }
+
+    @objc private func handleARCommand(_ notification: Notification) {
+        guard let command = notification.userInfo?[BusKey.arg] as? String else { return }
+        if command == "setGunVisibility:false" {
+            hideGun()
+        } else if command == "setGunVisibility:true" {
+            showGun()
+        }
+    }
+
+    private func hideGun() {
+        gunNode?.isHidden = true
+    }
+
+    private func showGun() {
+        gunNode?.isHidden = false
     }
 
     // MARK: - Testing Mode
