@@ -65,24 +65,37 @@ final class LiveMicController {
     // MARK: - Public API
 
     /// Starts capturing mic audio and streaming it into GeminiFlashLiveClient.
-    func startStreaming(to client: GeminiFlashLiveClient = .shared) {
+    /// - Parameter skipAudioSessionConfig: If true, skips audio session configuration (use when caller already configured it)
+    func startStreaming(to client: GeminiFlashLiveClient = .shared, skipAudioSessionConfig: Bool = false) {
         guard !isRunning else { return }
 
         currentClient = client
 
-        Task {
+        // Use Task.detached to ensure audio session configuration runs off main thread
+        // AudioSession configuration can block for 500-1000ms
+        Task.detached(priority: .userInitiated) { [weak self, client] in
+            guard let self else { return }
+            let startTime = CACurrentMediaTime()
+            print("🎙️ [LiveMic] Task.detached started on thread: \(Thread.isMainThread ? "MAIN ⚠️" : "background ✅")")
             do {
-                try await configureAudioSession()
+                if skipAudioSessionConfig {
+                    print("🎙️ [LiveMic] Skipping audio session config (already configured)")
+                } else {
+                    try await self.configureAudioSession()
+                    print("⏱️ [LiveMic] configureAudioSession took \(Int((CACurrentMediaTime() - startTime) * 1000))ms")
+                }
 
                 // Move engine start operations to background queue to avoid blocking main thread
+                let engineStartTime = CACurrentMediaTime()
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    audioQueue.async { [weak self] in
+                    self.audioQueue.async { [weak self] in
                         guard let self = self else {
                             continuation.resume(throwing: NSError(domain: "LiveMic", code: 99, userInfo: nil))
                             return
                         }
                         do {
                             try self.startEngineAndTap(to: client)
+                            print("⏱️ [LiveMic] startEngineAndTap took \(Int((CACurrentMediaTime() - engineStartTime) * 1000))ms")
                             Task { @MainActor in
                                 self.isRunning = true
                             }
@@ -93,8 +106,10 @@ final class LiveMicController {
                     }
                 }
             } catch {
-                onError?(error)
-                stop()
+                await MainActor.run {
+                    self.onError?(error)
+                    self.stop()
+                }
             }
         }
     }

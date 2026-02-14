@@ -44,8 +44,9 @@ struct OrchestratorView: View {
                 .onAppear { roomNames = RoomLibrary.savedRooms() }
             } else {
                 ZStack {
-                    // AR camera view - always loaded but initially hidden
-                    ARSceneView(
+                    // AR camera view - wrapped in EquatableView to prevent
+                    // VoiceCoach state changes from triggering AR re-renders
+                    EquatableView(content: StableARSceneView(
                         isArmed: $isArmed,
                         clearTick: $clearTick,
                         onDisarm: { isArmed = false },
@@ -54,9 +55,7 @@ struct OrchestratorView: View {
                             stopSession()
                             dismiss()
                         }
-                    ) {
-                        EmptyView() // No user-facing overlay
-                    }
+                    ))
                     .onDisappear {
                         stopSession()
                         cleanup()

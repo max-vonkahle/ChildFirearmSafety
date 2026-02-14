@@ -83,6 +83,17 @@ struct HomeView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
 
+                NavigationLink {
+                    RAGTestView()
+                } label: {
+                    Label("RAG System Test", systemImage: "brain")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.cyan.opacity(0.2))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+
                 Spacer()
             }
             .padding()

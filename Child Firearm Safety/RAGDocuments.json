@@ -1,0 +1,89 @@
+{
+  "documents": [
+    {
+      "id": "example_id",
+      "title": "Example Doc",
+      "content": "This is an example doc. Use this as an example to fill in the rest of the docs and then delete it.",
+      "category": "example_category",
+      "tags": ["example", "sample", "etc"],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    },
+    {
+      "id": "",
+      "title": "",
+      "content": "",
+      "category": "",
+      "tags": ["",""],
+      "embedding": null
+    }
+  ],
+  "metadata": {
+    "version": "1.0",
+    "last_updated": "2025-02-12",
+    "embedding_model": "text-embedding-004"
+  }
+}

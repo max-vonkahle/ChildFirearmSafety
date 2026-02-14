@@ -120,6 +120,14 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             object: nil
         )
 
+        // --- Listen for save world map command ---
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSaveWorldMap(_:)),
+            name: .saveWorldMap,
+            object: nil
+        )
+
         // --- Preload models ---
         preloadModel(named: "gun")
         preloadModel(named: "table")
@@ -488,6 +496,78 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             hideGun()
         } else if command == "setGunVisibility:true" {
             showGun()
+        }
+    }
+
+    @objc private func handleSaveWorldMap(_ notification: Notification) {
+        let roomId = (notification.userInfo?["roomId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveId: String
+        if let roomId, !roomId.isEmpty {
+            effectiveId = roomId
+        } else {
+            effectiveId = "default"
+        }
+        saveWorldMap(roomId: effectiveId)
+    }
+
+    private func saveWorldMap(roomId: String) {
+        guard let frame = session.currentFrame else {
+            print("❌ [Stereo] Cannot save: frame not available")
+            showSaveAlert(success: false, message: "AR session not ready")
+            return
+        }
+
+        let status = frame.worldMappingStatus
+        print("🗺️ [Stereo] World mapping status: \(statusDescription(status))")
+
+        guard status == .mapped || status == .extending else {
+            print("❌ [Stereo] World map not ready (status: \(status)). Walk around more.")
+            showSaveAlert(success: false, message: "Please walk around more to map the environment.\n\nMapping status: \(statusDescription(status))")
+            return
+        }
+
+        print("✅ [Stereo] World mapping status OK, getting world map...")
+        session.getCurrentWorldMap { [weak self] map, error in
+            if let error = error {
+                print("❌ [Stereo] getCurrentWorldMap error:", error)
+                self?.showSaveAlert(success: false, message: "Failed to get world map: \(error.localizedDescription)")
+                return
+            }
+            guard let map = map else {
+                print("❌ [Stereo] No world map returned")
+                self?.showSaveAlert(success: false, message: "No world map data available")
+                return
+            }
+            do {
+                try WorldMapStore.save(map, roomId: roomId)
+                print("✅ [Stereo] Saved map for '\(roomId)' (\(map.anchors.count) anchors)")
+                self?.showSaveAlert(success: true, message: "Room '\(roomId)' saved successfully!")
+            } catch {
+                print("❌ [Stereo] Save map failed:", error)
+                self?.showSaveAlert(success: false, message: "Failed to save: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func statusDescription(_ status: ARFrame.WorldMappingStatus) -> String {
+        switch status {
+        case .notAvailable: return "Not Available"
+        case .limited: return "Limited"
+        case .extending: return "Extending"
+        case .mapped: return "Mapped"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    private func showSaveAlert(success: Bool, message: String) {
+        DispatchQueue.main.async {
+            let alert = UIAlertController(
+                title: success ? "Save Successful" : "Save Failed",
+                message: message,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            self.present(alert, animated: true)
         }
     }
 

@@ -21,6 +21,7 @@ final class AudioSessionManager {
         guard currentMode != mode else { return }
 
         let session = AVAudioSession.sharedInstance()
+        let startTime = CACurrentMediaTime()
 
         switch mode {
         case .playbackOnly:
@@ -33,9 +34,8 @@ final class AudioSessionManager {
         try session.setActive(true, options: [])
         currentMode = mode
 
-        #if DEBUG
-        print("[AudioSession] Configured for \(mode)")
-        #endif
+        let elapsed = (CACurrentMediaTime() - startTime) * 1000
+        print("⏱️ [AudioSession] Configured for \(mode) in \(Int(elapsed))ms")
     }
 
     func deactivate() {

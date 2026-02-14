@@ -148,19 +148,28 @@ final class VoiceCoach: ObservableObject {
     }
 
     func startSession() {
-        Task { @MainActor in
+        // Configure audio session on background thread to avoid blocking AR frame delivery
+        Task.detached(priority: .userInitiated) {
             do {
+                // These audio session calls can block for 500-1000ms each
                 try AudioSessionManager.shared.configure(for: .duplexVoice)
                 try VoicePerms.activateAudioSession()
+
+                // Permission requests need to happen but shouldn't block AR
                 try await VoicePerms.requestMicrophone()
                 try await VoicePerms.requestSpeech()
-                VoicePerms.setModeListening()
+                // NOTE: Don't call setModeListening() here - intro needs playback mode
+                // setModeListening() will be called in resumeListening() after intro completes
 
-                // Begin with the scripted intro spoken by the Live model.
-                scriptedIntro()
+                // Begin with the scripted intro spoken by the Live model (on main actor)
+                await MainActor.run { [weak self] in
+                    self?.scriptedIntro()
+                }
             } catch {
-                transcript.append("\n[voice error] \(error.localizedDescription)")
-                state = .idle
+                await MainActor.run { [weak self] in
+                    self?.transcript.append("\n[voice error] \(error.localizedDescription)")
+                    self?.state = .idle
+                }
             }
         }
     }
@@ -278,8 +287,8 @@ final class VoiceCoach: ObservableObject {
                     self.llmActive = true
                     self.liveAudio.resetForNewTurn()  // Reset buffer tracking for new turn
                     print("🧵 [VC] audio conversation open → starting mic")
-                    // CRITICAL: Pass the correct client instance!
-                    LiveMicController.shared.startStreaming(to: self.live)
+                    // Skip audio session config - already configured in resumeListening()
+                    LiveMicController.shared.startStreaming(to: self.live, skipAudioSessionConfig: true)
                 }
             },
             onTextDelta: { [weak self] chunk in
@@ -364,14 +373,23 @@ final class VoiceCoach: ObservableObject {
             return
         }
 
-        try? AudioSessionManager.shared.configure(for: .duplexVoice)
         isConversationActive = true
         state = .listening
-        VoicePerms.setModeListening()
 
-        // Start audio conversation (which internally calls LiveMicController.shared.startStreaming)
-        // The startStreaming method now runs engine operations on background queue
-        liveHandle = live.startAudioConversation(handlers: audioConversationHandlers())
+        // Configure audio session on background thread to avoid blocking AR frame delivery
+        // AudioSession configuration can take 500-1000ms and blocks the calling thread
+        Task.detached(priority: .userInitiated) {
+            // Note: VoicePerms.setModeListening() also configures audio session - moved here
+            VoicePerms.setModeListening()
+            try? AudioSessionManager.shared.configure(for: .duplexVoice)
+
+            // Start audio conversation after session is configured
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                // Start audio conversation (which internally calls LiveMicController.shared.startStreaming)
+                self.liveHandle = self.live.startAudioConversation(handlers: self.audioConversationHandlers())
+            }
+        }
     }
 
     private func append(_ s: String) { transcript += s }
@@ -421,8 +439,25 @@ final class VoiceCoach: ObservableObject {
         case .postResetEncouragement:
             handlePostResetEncouragement()
 
+        case .praiseBackedAway:
+            handlePraiseBackedAway()
+
         default:
             break
+        }
+    }
+
+    private func handlePraiseBackedAway() {
+        Task { @MainActor in
+            // Retrieve RAG context for successful behavior
+            let ragGuidance = await RAGService.shared.retrieveContext(
+                for: "child successfully followed safety rules and backed away, reinforce with specific praise",
+                mode: .training,
+                limit: 2
+            )
+
+            // Inject coaching guidance into the conversation
+            injectContext(ragGuidance)
         }
     }
 
@@ -430,16 +465,25 @@ final class VoiceCoach: ObservableObject {
         // Flag already set in handleDialogueIntent
         print("🔄 [VC \(instanceID)] Processing reset instruction")
 
-        let context = """
-        The child reached for the gun. Tell them firmly but kindly:
-        1. Don't touch it
-        2. Step back away from the gun
-        3. Go back to where you started
-        4. When you're ready, tap anywhere on the screen
-        Be encouraging but clear this was incorrect.
-        """
-
         Task { @MainActor in
+            // Retrieve RAG context for mistake handling
+            let ragGuidance = await RAGService.shared.retrieveContext(
+                for: "child reached for gun, need gentle correction and teaching moment",
+                mode: .training,
+                limit: 2
+            )
+
+            let context = """
+            The child reached for the gun. Tell them firmly but kindly:
+            1. Don't touch it
+            2. Step back away from the gun
+            3. Go back to where you started
+            4. When you're ready, tap anywhere on the screen
+            Be encouraging but clear this was incorrect.
+
+            \(ragGuidance)
+            """
+
             // Stop any current conversation or audio to avoid overlap
             LiveMicController.shared.stop()
             liveAudio.stop()

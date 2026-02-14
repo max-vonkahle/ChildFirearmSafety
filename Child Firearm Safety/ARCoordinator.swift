@@ -77,6 +77,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     // Prevent overlapping frame processing
     private var isProcessingFrame = false
 
+    // Frame timing diagnostics
+    private var lastFrameTime: CFTimeInterval = 0
+    private var frameGapThreshold: CFTimeInterval = 0.1  // Log if gap > 100ms
+
     // MARK: - Wiring
 
     func bind(arView: ARView, onDisarm: @escaping () -> Void) {
@@ -163,6 +167,16 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     private func onFrame() {
+        // Frame timing diagnostics - detect frame drops
+        let now = CACurrentMediaTime()
+        if lastFrameTime > 0 {
+            let gap = now - lastFrameTime
+            if gap > frameGapThreshold {
+                print("⚠️ [ARCoord] Frame gap: \(Int(gap * 1000))ms")
+            }
+        }
+        lastFrameTime = now
+
         // Prevent overlapping frame processing
         if isProcessingFrame { return }
         isProcessingFrame = true
@@ -340,23 +354,75 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     // MARK: - ARWorldMap Save / Load
 
     func saveWorldMap(roomId: String) {
-        guard let arView = arView, let frame = arView.session.currentFrame else { return }
-
-        let status = frame.worldMappingStatus
-        guard status == .mapped || status == .extending else {
-            print("World map not ready (status: \(status)). Walk around more.")
+        guard let arView = arView, let frame = arView.session.currentFrame else {
+            print("❌ Cannot save: AR view or frame not available")
+            showSaveAlert(success: false, message: "AR session not ready")
             return
         }
 
-        arView.session.getCurrentWorldMap { map, error in
-            if let error = error { print("getCurrentWorldMap error:", error); return }
-            guard let map = map else { print("No world map"); return }
+        let status = frame.worldMappingStatus
+        print("🗺️ World mapping status: \(status)")
+
+        guard status == .mapped || status == .extending else {
+            print("❌ World map not ready (status: \(status)). Walk around more.")
+            showSaveAlert(success: false, message: "Please walk around more to map the environment.\n\nMapping status: \(statusDescription(status))")
+            return
+        }
+
+        print("✅ World mapping status OK, getting world map...")
+        arView.session.getCurrentWorldMap { [weak self] map, error in
+            if let error = error {
+                print("❌ getCurrentWorldMap error:", error)
+                self?.showSaveAlert(success: false, message: "Failed to get world map: \(error.localizedDescription)")
+                return
+            }
+            guard let map = map else {
+                print("❌ No world map returned")
+                self?.showSaveAlert(success: false, message: "No world map data available")
+                return
+            }
             do {
                 try WorldMapStore.save(map, roomId: roomId)
-                print("Saved map for \(roomId)")
+                print("✅ Saved map for '\(roomId)' (\(map.anchors.count) anchors)")
+                self?.showSaveAlert(success: true, message: "Room '\(roomId)' saved successfully!")
             } catch {
-                print("Save map failed:", error)
+                print("❌ Save map failed:", error)
+                self?.showSaveAlert(success: false, message: "Failed to save: \(error.localizedDescription)")
             }
+        }
+    }
+
+    private func statusDescription(_ status: ARFrame.WorldMappingStatus) -> String {
+        switch status {
+        case .notAvailable: return "Not Available"
+        case .limited: return "Limited"
+        case .extending: return "Extending"
+        case .mapped: return "Mapped"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    private func showSaveAlert(success: Bool, message: String) {
+        DispatchQueue.main.async {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let rootViewController = windowScene.windows.first?.rootViewController else {
+                return
+            }
+
+            let alert = UIAlertController(
+                title: success ? "Save Successful" : "Save Failed",
+                message: message,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+
+            // Find the topmost presented view controller
+            var topController = rootViewController
+            while let presented = topController.presentedViewController {
+                topController = presented
+            }
+
+            topController.present(alert, animated: true)
         }
     }
 

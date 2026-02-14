@@ -48,8 +48,6 @@ struct ARSceneView<Overlay: View>: View {
             if cardboardMode {
                 StereoARContainer()
                     .ignoresSafeArea()
-                    .scaleEffect(0.98)
-                    .ignoresSafeArea()
             } else {
                 ARViewContainer(isArmed: $isArmed,
                                 clearTick: $clearTick,
@@ -139,5 +137,37 @@ private extension ARSceneView {
         withAnimation(.easeInOut(duration: 0.2)) {
             showExitUI = false
         }
+    }
+}
+
+// MARK: - Stable AR Scene View (prevents VoiceCoach state invalidation)
+
+/// Wrapper that prevents SwiftUI from invalidating ARSceneView
+/// when unrelated parent state (like VoiceCoach) changes.
+/// Uses EquatableView pattern to control when re-renders occur.
+struct StableARSceneView: View, Equatable {
+    @Binding var isArmed: Bool
+    @Binding var clearTick: Int
+    var onDisarm: () -> Void
+    var onSceneAppear: (() -> Void)?
+    var onExit: (() -> Void)?
+
+    static func == (lhs: StableARSceneView, rhs: StableARSceneView) -> Bool {
+        // Only allow updates when AR-relevant state actually changes
+        let isEqual = lhs.isArmed == rhs.isArmed && lhs.clearTick == rhs.clearTick
+        if !isEqual {
+            print("🔄 [StableAR] Allowing re-render: isArmed=\(lhs.isArmed)->\(rhs.isArmed), clearTick=\(lhs.clearTick)->\(rhs.clearTick)")
+        }
+        return isEqual
+    }
+
+    var body: some View {
+        ARSceneView(
+            isArmed: $isArmed,
+            clearTick: $clearTick,
+            onDisarm: onDisarm,
+            onSceneAppear: onSceneAppear,
+            onExit: onExit
+        )
     }
 }

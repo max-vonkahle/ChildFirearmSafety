@@ -1,2 +1,4 @@
 Secrets.xcconfig
 GoogleService-Info.plist
+RAG_IMPLEMENTATION.md
+precompute_embeddings.py

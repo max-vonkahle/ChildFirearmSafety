@@ -15,7 +15,7 @@ enum TestingSetupMode { case create, load }
 // MARK: - Shared UI State
 
 final class TestingSetupState: ObservableObject {
-    @Published var instructionText  = "Tap to place assets"
+    @Published var instructionText  = ""
     @Published var instructionStyle = InstructionStyle.neutral
     @Published var showSkipButton   = false
     @Published var hasKitchen       = false
@@ -341,7 +341,7 @@ final class TestingWallSelectorViewController: UIViewController {
     private func placeKitchen() {
         isArmed       = true
         selectedAsset = "kitchen"
-        state.instructionText  = "Tap to place kitchen"
+        state.instructionText  = "Tap the floor to place the "
         state.instructionStyle = .primary
     }
 
@@ -576,7 +576,7 @@ final class TestingWallSelectorViewController: UIViewController {
                 }
 
                 let rotX = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-                let rotZ = simd_quatf(angle:  .pi / 2, axis: SIMD3<Float>(0, 0, 1))
+                let rotZ = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(0, 0, 1))
                 gunModel.orientation = rotZ * rotX
 
                 let gunAnchor = AnchorEntity(world: gunTransform)
@@ -708,7 +708,7 @@ final class TestingWallSelectorViewController: UIViewController {
                 }
 
                 let rotX = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-                let rotZ = simd_quatf(angle:  .pi / 2, axis: SIMD3<Float>(0, 0, 1))
+                let rotZ = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(0, 0, 1))
                 gunModel.orientation = rotZ * rotX
 
                 let gunAnchor = AnchorEntity(world: gunTransform)
