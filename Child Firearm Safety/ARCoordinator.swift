@@ -62,6 +62,12 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var lastNearDistance: Float = 0
     private var lastNearTime: CFTimeInterval = 0
 
+    // Track when retreat motion actually begins
+    private var isRetreating: Bool = false
+    private var retreatStartDistance: Float = 0
+    private var retreatStartTime: CFTimeInterval = 0
+    private let retreatStartThreshold: Float = 0.15  // Movement of 15cm triggers "retreat started"
+
     // Frame-based deduplication for reach gestures
     private var lastReachGestureFrame: Int = 0  // Track which frame posted reach gesture
     private var currentFrameNumber: Int = 0      // Increment each frame
@@ -204,32 +210,52 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             // --- Proximity & back-away detection
             if let d = gunDistanceFromCamera(frame: frame) {
                 let tNow = t
+
                 // Enter near zone once
                 if d < 1.0, wasNear == false {
                     wasNear = true
                     lastNearDistance = d
                     lastNearTime = tNow
+                    isRetreating = false  // Reset retreat tracking
                     NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
                         userInfo: [BusKey.arevent: AREvent.gunProximityNear(distance: d)])
                 }
-                // Detect running away or backing away
-                let elapsedTime = tNow - lastNearTime
-                let retreatDistance = d - lastNearDistance
 
-                // Check for running away first (greater distance, less time)
-                if wasNear, retreatDistance > runAwayThreshold, elapsedTime < runAwayMaxTime {
-                    wasNear = false
-                    NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
-                        userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: elapsedTime)])
+                if wasNear {
+                    // Track retreat start - when they begin moving away
+                    let distanceFromNearest = d - lastNearDistance
+
+                    if !isRetreating && distanceFromNearest > retreatStartThreshold {
+                        // Retreat motion has begun!
+                        isRetreating = true
+                        retreatStartDistance = d
+                        retreatStartTime = tNow
+                    }
+
+                    if isRetreating {
+                        // Measure from when retreat started, not from proximity trigger
+                        let retreatElapsed = tNow - retreatStartTime
+                        let retreatDistance = d - retreatStartDistance
+
+                        // Check for running away (greater distance, less time)
+                        if retreatDistance > runAwayThreshold, retreatElapsed < runAwayMaxTime {
+                            wasNear = false
+                            isRetreating = false
+                            NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
+                                userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)])
+                        }
+                        // Fall back to backing away
+                        else if retreatDistance > backAwayThreshold, retreatElapsed < backAwayMaxTime {
+                            wasNear = false
+                            isRetreating = false
+                            NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
+                                userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)])
+                        }
+                    }
+
+                    // Update running minimum distance while in near state (for retreat start detection)
+                    lastNearDistance = min(lastNearDistance, d)
                 }
-                // Fall back to backing away (existing behavior)
-                else if wasNear, retreatDistance > backAwayThreshold, elapsedTime < backAwayMaxTime {
-                    wasNear = false
-                    NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
-                        userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)])
-                }
-                // Update running minimum distance while in near state
-                if wasNear { lastNearDistance = min(lastNearDistance, d) }
             }
 
             // Vision hand pose

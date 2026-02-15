@@ -118,7 +118,6 @@ final class Orchestrator: ObservableObject {
             toReflectionSoon()
 
         case (.encounterPending, .childRunsAway(let delta, let duration)):
-            // print("🏃 [Orchestrator] Child ran away! Distance: \(delta)m in \(duration)s")
             behaviorTracker.ranAwayPhysically = true
             phase = .praisePath
             say(.praiseRanAway)
