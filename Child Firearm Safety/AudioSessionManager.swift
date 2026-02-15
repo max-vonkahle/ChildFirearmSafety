@@ -35,7 +35,7 @@ final class AudioSessionManager {
         currentMode = mode
 
         let elapsed = (CACurrentMediaTime() - startTime) * 1000
-        print("⏱️ [AudioSession] Configured for \(mode) in \(Int(elapsed))ms")
+        // print("⏱️ [AudioSession] Configured for \(mode) in \(Int(elapsed))ms")
     }
 
     func deactivate() {

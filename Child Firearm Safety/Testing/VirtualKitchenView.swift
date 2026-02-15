@@ -63,21 +63,21 @@ final class VirtualKitchenViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
 
-        print("\n🎬 VirtualKitchenView viewDidLoad")
-        print("📋 roomId parameter: \(roomId ?? "nil")")
+        // print("\n🎬 VirtualKitchenView viewDidLoad")
+        // print("📋 roomId parameter: \(roomId ?? "nil")")
 
         // Load room data if available
         if let roomId = roomId {
-            print("🔍 Attempting to load testing room: '\(roomId)'")
+            // print("🔍 Attempting to load testing room: '\(roomId)'")
             if let roomData = RoomLibrary.loadTestingRoom(roomId: roomId) {
                 assetTransforms = roomData.assets
-                print("✅ Loaded testing room '\(roomId)' with \(assetTransforms.count) assets")
-                print("   Asset keys: \(assetTransforms.keys.sorted())")
+                // print("✅ Loaded testing room '\(roomId)' with \(assetTransforms.count) assets")
+                // print("   Asset keys: \(assetTransforms.keys.sorted())")
             } else {
-                print("⚠️ Failed to load testing room: \(roomId)")
+                // print("⚠️ Failed to load testing room: \(roomId)")
             }
         } else {
-            print("⚠️ No roomId provided to VirtualKitchenView")
+            // print("⚠️ No roomId provided to VirtualKitchenView")
         }
 
         setupScene()
@@ -276,7 +276,7 @@ final class VirtualKitchenViewController: UIViewController {
 
     private func loadAsset(named assetName: String, at transform: simd_float4x4) {
         guard let assetURL = Bundle.main.url(forResource: assetName, withExtension: "usdz") else {
-            print("⚠️ \(assetName) model not found")
+            // print("⚠️ \(assetName) model not found")
             return
         }
 

@@ -32,7 +32,7 @@ struct TestingOrchestratorView: View {
                     rooms: roomNames,
                     onPick: { name in
                         selectedRoomId = name
-                        print("📍 Selected testing room: \(name)")
+                        // print("📍 Selected testing room: \(name)")
                     },
                     onDelete: { name in
                         RoomLibrary.deleteTestingRoom(name)
@@ -158,13 +158,13 @@ struct TestingOrchestratorView: View {
         let now = Date()
         if let lastTime = lastReachGestureTime,
            now.timeIntervalSince(lastTime) < 0.5 {
-            print("⏭️ [Testing] Duplicate reach gesture within 0.5s, ignoring")
+            // print("⏭️ [Testing] Duplicate reach gesture within 0.5s, ignoring")
             return
         }
         lastReachGestureTime = now
 
         resetAttempts += 1
-        print("🔄 [Testing] Child reached for gun. Attempt \(resetAttempts)/\(maxResetAttempts)")
+        // print("🔄 [Testing] Child reached for gun. Attempt \(resetAttempts)/\(maxResetAttempts)")
 
         // Hide gun via AR command
         NotificationCenter.default.post(
@@ -184,12 +184,12 @@ struct TestingOrchestratorView: View {
 
         // Wait for user to tap screen to confirm they're ready (manual reset)
         if resetAttempts < maxResetAttempts {
-            print("🔄 [Testing] Waiting for user tap to reset...")
+            // print("🔄 [Testing] Waiting for user tap to reset...")
             // Note: In testing mode, if you want manual tap reset, you'd need to implement
             // tap detection similar to training mode. For now, this remains as-is.
         } else {
             // Max attempts - end test after coaching
-            print("🔄 [Testing] Max attempts reached, ending test")
+            // print("🔄 [Testing] Max attempts reached, ending test")
             DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
                 coach.stopSession()
                 selectedRoomId = nil
@@ -253,8 +253,8 @@ final class TestingARViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        print("\n🎬 TestingARViewController viewDidLoad")
-        print("📋 roomId: \(roomId ?? "nil")")
+        // print("\n🎬 TestingARViewController viewDidLoad")
+        // print("📋 roomId: \(roomId ?? "nil")")
 
         setupARView()
         loadRoomData()
@@ -262,7 +262,7 @@ final class TestingARViewController: UIViewController {
         // Start timer - if relocalization doesn't happen in 10 seconds, place assets anyway
         relocalizationTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
             guard let self = self, !self.worldMapLoaded else { return }
-            print("⏱️ Relocalization timeout - placing assets anyway")
+            // print("⏱️ Relocalization timeout - placing assets anyway")
             self.worldMapLoaded = true
             self.placeAssets()
             self.onSceneReady?()
@@ -277,23 +277,23 @@ final class TestingARViewController: UIViewController {
         // Session delegate to know when relocalization completes
         arView.session.delegate = self
 
-        print("✅ ARView created")
+        // print("✅ ARView created")
     }
 
     private func loadRoomData() {
         guard let roomId = roomId else {
-            print("⚠️ No roomId provided")
+            // print("⚠️ No roomId provided")
             startDefaultSession()
             return
         }
 
         guard let roomData = RoomLibrary.loadTestingRoom(roomId: roomId) else {
-            print("⚠️ Failed to load room data, starting default session")
+            // print("⚠️ Failed to load room data, starting default session")
             startDefaultSession()
             return
         }
 
-        print("✅ Loaded testing room data")
+        // print("✅ Loaded testing room data")
         assetTransforms = roomData.assets
 
         // Configure AR session with the loaded world map

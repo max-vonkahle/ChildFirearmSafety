@@ -114,9 +114,9 @@ class GeminiEmbeddingClient {
             }
 
             guard httpResponse.statusCode == 200 else {
-                print("Embedding API error: status \(httpResponse.statusCode)")
+                // print("Embedding API error: status \(httpResponse.statusCode)")
                 if let responseStr = String(data: data, encoding: .utf8) {
-                    print("Response: \(responseStr)")
+                    // print("Response: \(responseStr)")
                 }
                 throw EmbeddingError.invalidResponse
             }

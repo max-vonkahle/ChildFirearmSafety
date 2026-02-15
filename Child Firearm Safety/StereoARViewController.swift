@@ -306,7 +306,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         CVMetalTextureCacheFlush(textureCache, 0)
 
         #if DEBUG
-        print("🗑️ [Stereo] Cleared pixel buffer references")
+        // print("🗑️ [Stereo] Cleared pixel buffer references")
         #endif
     }
 
@@ -331,7 +331,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             case .mapped, .extending:
                 testingAssetsPlaced = true
                 relocalizationTimer?.invalidate()
-                print("✅ Testing world map relocalized - placing assets")
+                // print("✅ Testing world map relocalized - placing assets")
                 DispatchQueue.main.async { [weak self] in
                     self?.placeTestingAssets()
                     self?.onTestingSceneReady?()
@@ -351,7 +351,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             let components = anchor.name?.split(separator: "_") ?? []
             let assetName = components.count > 1 ? String(components[1]) : "gun"
 
-            print("Found saved \(assetName) anchor in stereo mode, restoring model...")
+            // print("Found saved \(assetName) anchor in stereo mode, restoring model...")
 
             // Clone and place the model
             if let modelNode = modelTemplates[assetName]?.clone() {
@@ -372,7 +372,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                     gunNode = containerNode
                 }
 
-                print("\(assetName) model restored at saved position in stereo mode")
+                // print("\(assetName) model restored at saved position in stereo mode")
                 restoredAnyAsset = true
             } else {
                 print("Warning: \(assetName) model template not loaded, cannot restore anchor")
@@ -384,7 +384,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         if restoredAnyAsset && !hasNotifiedAssetsConfigured {
             hasNotifiedAssetsConfigured = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                print("✅ All assets restored, notifying UI")
+                // print("✅ All assets restored, notifying UI")
                 NotificationCenter.default.post(name: .assetsConfigured, object: nil)
             }
         }
@@ -400,7 +400,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     private func preloadModel(named assetName: String) {
         guard let url = Bundle.main.url(forResource: assetName, withExtension: "usdz") else {
-            print("" + assetName + " model not found in bundle")
+            // print("" + assetName + " model not found in bundle")
             return
         }
 
@@ -444,7 +444,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             }
 
             modelTemplates[assetName] = modelNode
-            print("" + assetName + " model loaded successfully for stereo mode")
+            // print("" + assetName + " model loaded successfully for stereo mode")
         } catch {
             print("Failed to load " + assetName + " model:", error)
         }
@@ -483,7 +483,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 guard let self = self else { return }
                 self.session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
-                print("Loaded world map for \(effectiveId) in stereo mode. Anchors will appear in session(_:didAdd:)")
+                // print("Loaded world map for \(effectiveId) in stereo mode. Anchors will appear in session(_:didAdd:)")
             }
         } catch {
             print("Failed to load world map in stereo mode:", error)
@@ -518,7 +518,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         }
 
         let status = frame.worldMappingStatus
-        print("🗺️ [Stereo] World mapping status: \(statusDescription(status))")
+        // print("🗺️ [Stereo] World mapping status: \(statusDescription(status))")
 
         guard status == .mapped || status == .extending else {
             print("❌ [Stereo] World map not ready (status: \(status)). Walk around more.")
@@ -526,7 +526,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             return
         }
 
-        print("✅ [Stereo] World mapping status OK, getting world map...")
+        // print("✅ [Stereo] World mapping status OK, getting world map...")
         session.getCurrentWorldMap { [weak self] map, error in
             if let error = error {
                 print("❌ [Stereo] getCurrentWorldMap error:", error)
@@ -540,7 +540,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             }
             do {
                 try WorldMapStore.save(map, roomId: roomId)
-                print("✅ [Stereo] Saved map for '\(roomId)' (\(map.anchors.count) anchors)")
+                // print("✅ [Stereo] Saved map for '\(roomId)' (\(map.anchors.count) anchors)")
                 self?.showSaveAlert(success: true, message: "Room '\(roomId)' saved successfully!")
             } catch {
                 print("❌ [Stereo] Save map failed:", error)
@@ -607,12 +607,12 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         }
 
         session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
-        print("✅ Testing AR session started with world map (\(roomData.worldMap.anchors.count) anchors)")
+        // print("✅ Testing AR session started with world map (\(roomData.worldMap.anchors.count) anchors)")
 
         // Fallback: place assets after 10s even if not fully relocalized
         relocalizationTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
             guard let self = self, !self.testingAssetsPlaced else { return }
-            print("⏱️ Testing relocalization timeout - placing assets anyway")
+            // print("⏱️ Testing relocalization timeout - placing assets anyway")
             self.testingAssetsPlaced = true
             self.placeTestingAssets()
             self.onTestingSceneReady?()
@@ -620,10 +620,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     }
 
     private func placeTestingAssets() {
-        print("\n🔧 === PLACING TESTING ASSETS (STEREO) ===")
+        // print("\n🔧 === PLACING TESTING ASSETS (STEREO) ===")
 
         guard let kitchenTransform = testingAssetTransforms["kitchen"] else {
-            print("⚠️ No kitchen transform in testing room data")
+            // print("⚠️ No kitchen transform in testing room data")
             return
         }
 
@@ -635,12 +635,12 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         let gunTransform = calculateTestingGunTransform(kitchenTransform: kitchenTransform, relativeOffset: relativeOffset)
         placeTestingModel(named: "gun", at: gunTransform, targetWidth: 0.2, isGun: true)
 
-        print("=== TESTING ASSET PLACEMENT COMPLETE ===\n")
+        // print("=== TESTING ASSET PLACEMENT COMPLETE ===\n")
     }
 
     private func placeTestingModel(named name: String, at transform: simd_float4x4, targetWidth: Float? = nil, isGun: Bool = false) {
         guard let url = Bundle.main.url(forResource: name, withExtension: "usdz") else {
-            print("⚠️ \(name).usdz not found")
+            // print("⚠️ \(name).usdz not found")
             return
         }
 
@@ -659,7 +659,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 if currentWidth > 0 {
                     let scale = targetWidth / currentWidth
                     modelNode.scale = SCNVector3(scale, scale, scale)
-                    print("📏 Scaled \(name): \(currentWidth)m -> \(targetWidth)m (factor: \(scale))")
+                    // print("📏 Scaled \(name): \(currentWidth)m -> \(targetWidth)m (factor: \(scale))")
                 }
             }
 
@@ -681,7 +681,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             scene.rootNode.addChildNode(containerNode)
 
             let pos = transform.columns.3
-            print("✅ Placed \(name) at (\(pos.x), \(pos.y), \(pos.z))")
+            // print("✅ Placed \(name) at (\(pos.x), \(pos.y), \(pos.z))")
         } catch {
             print("❌ Failed to load \(name): \(error)")
         }
@@ -825,9 +825,9 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         rightEye.camera?.projectionTransform = rightProjection
 
         // Debug: Print the projection parameters
-        print("[StereoDebug] effectiveOffset: \(effectiveOffset), screenAspect: \(screenAspect)")
-        print("[StereoDebug] Left projection m31 (a): \(leftProjection.m31)")
-        print("[StereoDebug] Right projection m31 (a): \(rightProjection.m31)")
+        // print("[StereoDebug] effectiveOffset: \(effectiveOffset), screenAspect: \(screenAspect)")
+        // print("[StereoDebug] Left projection m31 (a): \(leftProjection.m31)")
+        // print("[StereoDebug] Right projection m31 (a): \(rightProjection.m31)")
     }
 
     private func createReticle() {

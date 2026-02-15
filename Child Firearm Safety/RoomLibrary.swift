@@ -43,7 +43,7 @@ enum RoomLibrary {
                 do {
                     try fm.removeItem(at: url)
                     #if DEBUG
-                    print("[RoomLibrary] deleted \(id) -> \(url.lastPathComponent)")
+                    // print("[RoomLibrary] deleted \(id) -> \(url.lastPathComponent)")
                     #endif
                     return
                 } catch {
@@ -60,7 +60,7 @@ enum RoomLibrary {
                 if base == id {
                     try? fm.removeItem(at: u)
                     #if DEBUG
-                    print("[RoomLibrary] deleted \(id) (fallback) -> \(u.lastPathComponent)")
+                    // print("[RoomLibrary] deleted \(id) (fallback) -> \(u.lastPathComponent)")
                     #endif
                     break
                 }
@@ -177,7 +177,7 @@ enum RoomLibrary {
             let assetsData = try JSONEncoder().encode(testingData)
             try assetsData.write(to: assetsURL)
 
-            print("[RoomLibrary] ✅ Saved testing room '\(id)' with ARWorldMap and \(assets.count) assets")
+            // print("[RoomLibrary] ✅ Saved testing room '\(id)' with ARWorldMap and \(assets.count) assets")
         } catch {
             print("[RoomLibrary] ❌ Failed to save testing room '\(id)': \(error.localizedDescription)")
         }
@@ -195,8 +195,8 @@ enum RoomLibrary {
         let worldMapURL = docs.appendingPathComponent("testing_\(id)").appendingPathExtension("arworldmap")
         let assetsURL = docs.appendingPathComponent("testing_\(id)_assets").appendingPathExtension("json")
 
-        print("[RoomLibrary] 🔍 Looking for ARWorldMap at: \(worldMapURL.path)")
-        print("[RoomLibrary] 🔍 Looking for assets at: \(assetsURL.path)")
+        // print("[RoomLibrary] 🔍 Looking for ARWorldMap at: \(worldMapURL.path)")
+        // print("[RoomLibrary] 🔍 Looking for assets at: \(assetsURL.path)")
 
         guard fm.fileExists(atPath: worldMapURL.path) else {
             print("[RoomLibrary] ❌ Testing room ARWorldMap '\(id)' not found")
@@ -219,8 +219,8 @@ enum RoomLibrary {
                 assets = decoded.getAssetTransforms()
             }
 
-            print("[RoomLibrary] ✅ Loaded testing room '\(id)' with ARWorldMap and \(assets.count) assets")
-            print("[RoomLibrary] 📋 Asset keys: \(assets.keys.sorted())")
+            // print("[RoomLibrary] ✅ Loaded testing room '\(id)' with ARWorldMap and \(assets.count) assets")
+            // print("[RoomLibrary] 📋 Asset keys: \(assets.keys.sorted())")
             return (worldMap, assets)
         } catch {
             print("[RoomLibrary] ❌ Failed to load testing room '\(id)': \(error.localizedDescription)")
@@ -245,7 +245,7 @@ enum RoomLibrary {
             do {
                 try fm.removeItem(at: worldMapURL)
                 deletedCount += 1
-                print("[RoomLibrary] 🗑️ Deleted world map: \(worldMapURL.lastPathComponent)")
+                // print("[RoomLibrary] 🗑️ Deleted world map: \(worldMapURL.lastPathComponent)")
             } catch {
                 print("[RoomLibrary] ❌ Failed to delete world map '\(id)': \(error.localizedDescription)")
             }
@@ -255,7 +255,7 @@ enum RoomLibrary {
             do {
                 try fm.removeItem(at: assetsURL)
                 deletedCount += 1
-                print("[RoomLibrary] 🗑️ Deleted assets: \(assetsURL.lastPathComponent)")
+                // print("[RoomLibrary] 🗑️ Deleted assets: \(assetsURL.lastPathComponent)")
             } catch {
                 print("[RoomLibrary] ❌ Failed to delete assets '\(id)': \(error.localizedDescription)")
             }
@@ -267,16 +267,16 @@ enum RoomLibrary {
             do {
                 try fm.removeItem(at: oldFileURL)
                 deletedCount += 1
-                print("[RoomLibrary] 🗑️ Deleted old format: \(oldFileURL.lastPathComponent)")
+                // print("[RoomLibrary] 🗑️ Deleted old format: \(oldFileURL.lastPathComponent)")
             } catch {
                 print("[RoomLibrary] ❌ Failed to delete old format '\(id)': \(error.localizedDescription)")
             }
         }
 
         if deletedCount > 0 {
-            print("[RoomLibrary] ✅ Deleted testing room '\(id)' (\(deletedCount) files)")
+            // print("[RoomLibrary] ✅ Deleted testing room '\(id)' (\(deletedCount) files)")
         } else {
-            print("[RoomLibrary] ⚠️ No files found to delete for '\(id)'")
+            // print("[RoomLibrary] ⚠️ No files found to delete for '\(id)'")
         }
     }
 }

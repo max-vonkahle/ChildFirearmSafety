@@ -146,20 +146,20 @@ final class LiveAudioPlayer {
             // Apply peak normalization
             self.normalizeBuffer(buffer)
 
+            // Only log when engine needs restart (indicates a problem)
             if !self.engine.isRunning {
+                print("⚠️ [Audio] Engine was stopped! Restarting...")
                 do {
                     try self.engine.start()
-                    // print("[Audio] Engine restarted")
+                    // print("✅ [Audio] Engine restarted")
                 } catch {
-                    // print("[Audio] Failed to restart engine:", error)
+                    print("❌ [Audio] Failed to restart engine: \(error)")
                 }
             }
 
             if !self.player.isPlaying {
                 self.player.play()
             }
-
-            // print("[Audio] Scheduling buffer: \(data.count) bytes, \(frameCount) frames (input sr \(sampleRate), liveFormat sr \(self.liveFormat.sampleRate))")
             self.scheduledBuffers += 1
             let bufferIndex = self.scheduledBuffers
 
@@ -171,7 +171,7 @@ final class LiveAudioPlayer {
                     // If all scheduled buffers have completed, call the completion handler
                     if self.completedBuffers == self.scheduledBuffers {
                         if let handler = self.playbackCompletionHandler {
-                            // print("[Audio] All buffers complete (\(self.completedBuffers)/\(self.scheduledBuffers)), calling completion")
+                            // print("✅ [Audio] All \(self.completedBuffers) buffers complete")
                             self.playbackCompletionHandler = nil
                             DispatchQueue.main.async {
                                 handler()

@@ -73,6 +73,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private let pixelPadding: CGFloat = 24        // expands gun rect in screen px
     private let depthMargin: Float = 0.07         // hand must be this much closer than gun (meters)
     private let decisionInterval: CFTimeInterval = 0.15
+    private let runAwayThreshold: Float = 1.5       // Must retreat 1.5m+ to count as "running"
+    private let runAwayMaxTime: CFTimeInterval = 2.0 // Must do it within 2 seconds
+    private let backAwayThreshold: Float = 0.7      // Backing away threshold (existing behavior)
+    private let backAwayMaxTime: CFTimeInterval = 3.0 // Backing away time window
 
     // Prevent overlapping frame processing
     private var isProcessingFrame = false
@@ -114,16 +118,16 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         NotificationCenter.default.addObserver(forName: .arCommand, object: nil, queue: .main) { [weak self] note in
             guard let self = self else { return }
             let arg = note.userInfo?[BusKey.arg] as? String
-            print("🔫 [AR] Received AR command: \(arg ?? "nil")")
+            // print("🔫 [AR] Received AR command: \(arg ?? "nil")")
             if arg == "setGunVisibility:false" {
                 self.setGunVisible(false)
             } else if arg == "setGunVisibility:true" {
                 self.setGunVisible(true)
             } else if arg == "disableTapDuringSpeech" {
-                print("🔇 [AR] Disabling tap (model speaking reset instruction)")
+                // print("🔇 [AR] Disabling tap (model speaking reset instruction)")
                 self.isWaitingForResetSpeech = true
             } else if arg == "enableTapAfterSpeech" {
-                print("🔊 [AR] Enabling tap (model finished speaking)")
+                // print("🔊 [AR] Enabling tap (model finished speaking)")
                 self.isWaitingForResetSpeech = false
             }
         }
@@ -132,7 +136,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     // MARK: - Model preload (async/await first, iOS 17 fallback)
     func preloadModel(named name: String) {
         guard let url = Bundle.main.url(forResource: name, withExtension: "usdz") else {
-            print("Model not found in bundle: \(name).usdz")
+            // print("Model not found in bundle: \(name).usdz")
             return
         }
 
@@ -143,7 +147,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                     self?.modelRoots[name] = entity
                     self?.scaleToFit(entity, targetWidthMeters: 0.18, objectType: name)
                 } catch {
-                    print("Model load error:", error)
+                    // print("Model load error:", error)
                 }
             }
         } else {
@@ -208,11 +212,21 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                     NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
                         userInfo: [BusKey.arevent: AREvent.gunProximityNear(distance: d)])
                 }
-                // Detect backing away within a short window
-                if wasNear, d - lastNearDistance > 0.7, tNow - lastNearTime < 3.0 {
+                // Detect running away or backing away
+                let elapsedTime = tNow - lastNearTime
+                let retreatDistance = d - lastNearDistance
+
+                // Check for running away first (greater distance, less time)
+                if wasNear, retreatDistance > runAwayThreshold, elapsedTime < runAwayMaxTime {
                     wasNear = false
                     NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
-                        userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: d - lastNearDistance)])
+                        userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: elapsedTime)])
+                }
+                // Fall back to backing away (existing behavior)
+                else if wasNear, retreatDistance > backAwayThreshold, elapsedTime < backAwayMaxTime {
+                    wasNear = false
+                    NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
+                        userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)])
                 }
                 // Update running minimum distance while in near state
                 if wasNear { lastNearDistance = min(lastNearDistance, d) }

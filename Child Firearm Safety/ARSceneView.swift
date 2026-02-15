@@ -156,7 +156,7 @@ struct StableARSceneView: View, Equatable {
         // Only allow updates when AR-relevant state actually changes
         let isEqual = lhs.isArmed == rhs.isArmed && lhs.clearTick == rhs.clearTick
         if !isEqual {
-            print("🔄 [StableAR] Allowing re-render: isArmed=\(lhs.isArmed)->\(rhs.isArmed), clearTick=\(lhs.clearTick)->\(rhs.clearTick)")
+            // print("🔄 [StableAR] Allowing re-render: isArmed=\(lhs.isArmed)->\(rhs.isArmed), clearTick=\(lhs.clearTick)->\(rhs.clearTick)")
         }
         return isEqual
     }

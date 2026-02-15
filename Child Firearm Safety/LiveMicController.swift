@@ -76,13 +76,13 @@ final class LiveMicController {
         Task.detached(priority: .userInitiated) { [weak self, client] in
             guard let self else { return }
             let startTime = CACurrentMediaTime()
-            print("🎙️ [LiveMic] Task.detached started on thread: \(Thread.isMainThread ? "MAIN ⚠️" : "background ✅")")
+            // print("🎙️ [LiveMic] Task.detached started on thread: \(Thread.isMainThread ? "MAIN ⚠️" : "background ✅")")
             do {
                 if skipAudioSessionConfig {
-                    print("🎙️ [LiveMic] Skipping audio session config (already configured)")
+                    // print("🎙️ [LiveMic] Skipping audio session config (already configured)")
                 } else {
                     try await self.configureAudioSession()
-                    print("⏱️ [LiveMic] configureAudioSession took \(Int((CACurrentMediaTime() - startTime) * 1000))ms")
+                    // print("⏱️ [LiveMic] configureAudioSession took \(Int((CACurrentMediaTime() - startTime) * 1000))ms")
                 }
 
                 // Move engine start operations to background queue to avoid blocking main thread
@@ -95,7 +95,7 @@ final class LiveMicController {
                         }
                         do {
                             try self.startEngineAndTap(to: client)
-                            print("⏱️ [LiveMic] startEngineAndTap took \(Int((CACurrentMediaTime() - engineStartTime) * 1000))ms")
+                            // print("⏱️ [LiveMic] startEngineAndTap took \(Int((CACurrentMediaTime() - engineStartTime) * 1000))ms")
                             Task { @MainActor in
                                 self.isRunning = true
                             }
@@ -138,17 +138,10 @@ final class LiveMicController {
                 self.stopSpeechRecognition()
             }
 
-            // Deactivate audio session
-            do {
-                let session = AVAudioSession.sharedInstance()
-                if !session.isOtherAudioPlaying {
-                    try session.setActive(false, options: [.notifyOthersOnDeactivation])
-                }
-            } catch {
-                print("[LiveMic] AVAudioSession deactivate error:", error.localizedDescription)
-            }
+            // NOTE: Don't deactivate audio session here - it stops the playback engine!
+            // The session should stay active for the model's audio response.
 
-            print("🛑 [LiveMic] Stopped audio capture")
+            // print("🛑 [LiveMic] Stopped audio capture")
         }
     }
 
@@ -369,7 +362,7 @@ final class LiveMicController {
 
                     if text != self.lastPrintedTranscript {
                         self.lastPrintedTranscript = text
-                        print("🗣️ [LiveMic][debug ASR] \(text)")
+                        // print("🗣️ [LiveMic][debug ASR] \(text)")
 
                         // Cancel any existing pause timers and start new ones
                         self.shortPauseTimer?.cancel()
@@ -379,7 +372,7 @@ final class LiveMicController {
                         self.shortPauseTimer = Task { @MainActor in
                             do {
                                 try await Task.sleep(for: .seconds(self.shortPauseThreshold))
-                                print("🔇 [LiveMic] Short pause detected after \(self.shortPauseThreshold)s (UI feedback only)")
+                                // print("🔇 [LiveMic] Short pause detected after \(self.shortPauseThreshold)s (UI feedback only)")
                             } catch {
                                 // Timer was cancelled (user spoke again)
                             }
@@ -392,11 +385,11 @@ final class LiveMicController {
 
                                 // Check if mic is still running (might have been stopped by Gemini responding)
                                 guard self.isRunning else {
-                                    print("⏹️ [LiveMic] Long pause timer fired but mic already stopped - ignoring")
+                                    // print("⏹️ [LiveMic] Long pause timer fired but mic already stopped - ignoring")
                                     return
                                 }
 
-                                print("⏹️ [LiveMic] Long pause detected after \(self.longPauseThreshold)s - finalizing turn")
+                                // print("⏹️ [LiveMic] Long pause detected after \(self.longPauseThreshold)s - finalizing turn")
 
                                 // Capture transcript before stopping
                                 let finalTranscript = self.lastPrintedTranscript

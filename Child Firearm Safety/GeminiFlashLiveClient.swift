@@ -62,7 +62,7 @@ final class GeminiFlashLiveClient {
             #if DEBUG
             if session == nil && oldValue != nil {
                 // Session closed - this is normal during shutdown
-                print("✅ [Live] Session closed gracefully")
+                // print("✅ [Live] Session closed gracefully")
             }
             #endif
         }
@@ -98,7 +98,7 @@ final class GeminiFlashLiveClient {
     /// Returns a handle you can use to cancel / barge-in.
     @discardableResult
     func stream(userText: String, handlers: Handlers) -> GeminiFlashLiveStreamHandle {
-        print("🟦 [LLM →] \(userText)")
+        // print("🟦 [LLM →] \(userText)")
         
         let handle = GeminiFlashLiveStreamHandle()
 
@@ -142,7 +142,7 @@ final class GeminiFlashLiveClient {
     func sendAudioChunk(_ data: Data) async {
         guard let session else {
             #if DEBUG
-            print("🟥 [Live] sendAudioChunk called but session is nil - session was: \(self.session == nil ? "nil" : "exists"), liveModel: \(liveModel == nil ? "nil" : "exists")")
+            // print("🟥 [Live] sendAudioChunk called but session is nil - session was: \(self.session == nil ? "nil" : "exists"), liveModel: \(liveModel == nil ? "nil" : "exists")")
             #endif
             return
         }
@@ -150,7 +150,7 @@ final class GeminiFlashLiveClient {
         #if DEBUG
         // Only print occasionally to reduce log spam
         if Int.random(in: 0..<100) == 0 {
-            print("🎙 [Live] sending audio chunk: \(data.count) bytes")
+            // print("🎙 [Live] sending audio chunk: \(data.count) bytes")
         }
         #endif
 
@@ -162,13 +162,13 @@ final class GeminiFlashLiveClient {
     func sendText(_ text: String) async {
         guard let session else {
             #if DEBUG
-            print("🟥 [Live] sendText called but session is nil")
+            // print("🟥 [Live] sendText called but session is nil")
             #endif
             return
         }
 
         #if DEBUG
-        print("📤 [Live] sending text: \(text)")
+        // print("📤 [Live] sending text: \(text)")
         #endif
 
         await session.sendTextRealtime(text)
@@ -196,10 +196,10 @@ final class GeminiFlashLiveClient {
             pendingAudio.removeAll(keepingCapacity: false)
             pendingSampleRate = 24_000
 
-            print("✅ [Live] Audio conversation session ready (session exists: \(session != nil))")
+            // print("✅ [Live] Audio conversation session ready (session exists: \(session != nil))")
             handlers.onOpen?()
         } catch {
-            print("🟥 [Live] Failed to start audio conversation: \(error)")
+            // print("🟥 [Live] Failed to start audio conversation: \(error)")
             handlers.onError?(error)
             currentHandlers = nil
         }
@@ -246,11 +246,10 @@ final class GeminiFlashLiveClient {
     private func ensureSession() async throws {
         if session != nil { return }
 
-        // Minimal LiveGenerationConfig aligned with Firebase Live API docs:
-        // - Live-capable model (e.g. gemini-live-2.5-flash-preview)
-        // - Audio response modality only
+        // LiveGenerationConfig with audio response and voice configuration
         let generation = LiveGenerationConfig(
-            responseModalities: [.audio]
+            responseModalities: [.audio],
+            speech: SpeechConfig(voiceName: voiceName)
         )
 
         // Optional system instruction; sent as initial system content.
@@ -319,7 +318,7 @@ final class GeminiFlashLiveClient {
                     if let textPart = part as? TextPart {
                         // Plain text token/turn
                         #if DEBUG
-                        print("🟩 [LLM ← text] \(textPart.text)")
+                        // print("🟩 [LLM ← text] \(textPart.text)")
                         #endif
                         handlers.onTextDelta?(textPart.text)
 
@@ -328,9 +327,7 @@ final class GeminiFlashLiveClient {
                         let mime = inlinePart.mimeType.lowercased()
                         if mime.hasPrefix("audio/pcm") {
                             let rate = Self.sampleRate(from: inlinePart.mimeType) ?? 24_000
-                            #if DEBUG
-                            // print("🔊 [LLM ← audio] \(inlinePart.data.count) bytes @ \(rate) Hz")
-                            #endif
+                            // Audio chunk logging disabled to reduce spam
                             pendingSampleRate = rate
                             pendingAudio.append(inlinePart.data)
                             handlers.onAudioReady?(inlinePart.data, rate)
@@ -361,7 +358,7 @@ final class GeminiFlashLiveClient {
                 #endif
                 pendingAudio.removeAll(keepingCapacity: false)
                 #if DEBUG
-                print("✅ [Live] turn complete")
+                // print("✅ [Live] turn complete")
                 #endif
                 let doneHandler = currentHandlers?.onDone
                 currentHandlers = nil
@@ -371,7 +368,7 @@ final class GeminiFlashLiveClient {
 
         case .goingAwayNotice:
             #if DEBUG
-            print("🟥 [Live] goingAwayNotice (session closing)")
+            // print("🟥 [Live] goingAwayNotice (session closing)")
             #endif
             currentHandlers?.onDone?()
             currentHandlers = nil
@@ -386,7 +383,7 @@ final class GeminiFlashLiveClient {
 
     private func handleStreamError(_ error: Error) {
         #if DEBUG
-        print("❗ [Live] stream error: \(error)")
+        // print("❗ [Live] stream error: \(error)")
         #endif
 
         if let handlers = currentHandlers {

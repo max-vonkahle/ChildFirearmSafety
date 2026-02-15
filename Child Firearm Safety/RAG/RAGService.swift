@@ -34,9 +34,9 @@ class RAGService {
         if let apiKey = UserDefaults.standard.string(forKey: "gemini_api_key"), !apiKey.isEmpty {
             embeddingClient = GeminiEmbeddingClient(apiKey: apiKey)
             semanticRetriever = SemanticRetriever(embeddingClient: embeddingClient)
-            print("RAGService: Embedding client initialized")
+            // print("RAGService: Embedding client initialized")
         } else {
-            print("RAGService: No API key found, using TF-IDF only")
+            // print("RAGService: No API key found, using TF-IDF only")
             semanticRetriever = SemanticRetriever(embeddingClient: nil)
         }
     }
@@ -44,7 +44,7 @@ class RAGService {
     /// Load documents from bundle RAGDocuments.json
     private func loadDocuments() {
         guard let url = Bundle.main.url(forResource: "RAGDocuments", withExtension: "json") else {
-            print("RAGService: RAGDocuments.json not found in bundle")
+            // print("RAGService: RAGDocuments.json not found in bundle")
             return
         }
 
@@ -56,10 +56,10 @@ class RAGService {
             documents = store.documents
             metadata = store.metadata
 
-            print("RAGService: Loaded \(documents.count) documents (version \(store.metadata.version))")
+            // print("RAGService: Loaded \(documents.count) documents (version \(store.metadata.version))")
 
         } catch {
-            print("RAGService: Failed to load documents: \(error)")
+            // print("RAGService: Failed to load documents: \(error)")
         }
     }
 
@@ -94,7 +94,7 @@ class RAGService {
                     limit: effectiveLimit
                 )
             } catch {
-                print("RAGService: Semantic retrieval failed, falling back to TF-IDF: \(error)")
+                // print("RAGService: Semantic retrieval failed, falling back to TF-IDF: \(error)")
                 finalDocuments = Array(tfidfCandidates.prefix(effectiveLimit))
             }
         } else {
@@ -162,6 +162,6 @@ class RAGService {
     /// Clear query cache
     func clearCaches() {
         queryCache.removeAll()
-        print("RAGService: Query cache cleared")
+        // print("RAGService: Query cache cleared")
     }
 }

@@ -23,7 +23,14 @@ final class VoiceCoach: ObservableObject {
     • Stop. • Don't touch it. • Run away. • Tell a trusted adult.
 
     Your are guiding them through a behavioral skills training where they will see a gun.
-    You want to teach them the core rules, then have them repeat them as well as act them out. Make sure that they answer your questions correctly and repeat the correct steps. 
+    You want to teach them the core rules, then have them explain each step back to you verbally. Make sure that they can clearly state each safety rule.
+
+    When the child has successfully explained or demonstrated all four safety rules:
+    1. Praise them enthusiastically
+    2. Output EXACTLY this text: [TRAINING_COMPLETE]
+    3. Tell them they did a great job
+
+    Example: "Excellent work! You know all four rules perfectly! Great job! You've learned the important safety rules. [TRAINING_COMPLETE]"
 
     Your objective is to help the child learn: stop, don't touch it, run away, and tell a trusted adult.
     """
@@ -43,13 +50,16 @@ final class VoiceCoach: ObservableObject {
     // Lifecycle flag to coordinate LLM streaming and playback
     private var llmActive = false
 
+    // Flag to track when training completion has been signaled
+    private var trainingCompletionSignaled = false
+
     // Unique instance identifier for debugging
     private let instanceID: String
 
     init(promptKey: String = "systemPrompt") {
         self.systemPrompt = UserDefaults.standard.string(forKey: promptKey) ?? defaultPrompt
         self.instanceID = String(UUID().uuidString.prefix(8))
-        print("🎤 [VC INIT] VoiceCoach instance created with ID: \(instanceID), promptKey: \(promptKey)")
+        // print("🎤 [VC INIT] VoiceCoach instance created with ID: \(instanceID), promptKey: \(promptKey)")
         setupMicCallbacks()
         setupDialogueIntentListener()
     }
@@ -59,7 +69,7 @@ final class VoiceCoach: ObservableObject {
         if let observer = dialogueIntentObserver {
             NotificationCenter.default.removeObserver(observer)
         }
-        print("🧹 [VC \(instanceID)] VoiceCoach deinitialized and observer removed")
+        // print("🧹 [VC \(instanceID)] VoiceCoach deinitialized and observer removed")
     }
 
     private func setupMicCallbacks() {
@@ -70,7 +80,7 @@ final class VoiceCoach: ObservableObject {
                 // Ignore speech callbacks if mic was stopped for Gemini's response
                 // This prevents buffered speech recognition from restarting the mic
                 if self.micStoppedForCurrentTurn {
-                    print("🎙️ [VC] Speech detected but ignoring (Gemini is responding)")
+                    // print("🎙️ [VC] Speech detected but ignoring (Gemini is responding)")
                     return
                 }
 
@@ -78,7 +88,7 @@ final class VoiceCoach: ObservableObject {
                 if self.state != .speaking {
                     self.state = .listening
                 }
-                print("🎙️ [VC] User started speaking")
+                // print("🎙️ [VC] User started speaking")
             }
         }
 
@@ -93,7 +103,7 @@ final class VoiceCoach: ObservableObject {
 
                 // With continuous streaming, don't change state on pause detection
                 // The state will change to .thinking/.speaking when Gemini actually responds
-                print("🔇 [VC] User paused speaking (audio still streaming to Gemini)")
+                // print("🔇 [VC] User paused speaking (audio still streaming to Gemini)")
             }
         }
 
@@ -125,7 +135,7 @@ final class VoiceCoach: ObservableObject {
                     return
                 }
 
-                print("📝 [VC] Turn complete with transcript: \(userTranscript)")
+                // print("📝 [VC] Turn complete with transcript: \(userTranscript)")
                 self.state = .thinking
                 self.isTurnInFlight = true
 
@@ -148,6 +158,9 @@ final class VoiceCoach: ObservableObject {
     }
 
     func startSession() {
+        // Reset completion flag for new session
+        trainingCompletionSignaled = false
+
         // Configure audio session on background thread to avoid blocking AR frame delivery
         Task.detached(priority: .userInitiated) {
             do {
@@ -210,7 +223,7 @@ final class VoiceCoach: ObservableObject {
     private func scriptedIntro() {
         Task { @MainActor in
             interruptLLMAndTTS()
-            print("[VC \(instanceID)] scriptedIntro: begin")
+            // print("[VC \(instanceID)] scriptedIntro: begin")
 
             // Keep this concise and neutral; do not teach handling, only frame the activity.
             let intro = "Hi there. Let's do a quick safety practice. Can you show me what you learned if you find a gun like this?"
@@ -238,7 +251,7 @@ final class VoiceCoach: ObservableObject {
             },
             onTextDelta: { [weak self] chunk in
                 Task { @MainActor in
-                    print("🟩 [LLM ←] \(chunk)")
+                    // print("🟩 [LLM ←] \(chunk)")
                     self?.append(chunk)
                 }
             },
@@ -255,7 +268,7 @@ final class VoiceCoach: ObservableObject {
                     self.liveAudio.onPlaybackComplete { [weak self] in
                         Task { @MainActor in
                             guard let self else { return }
-                            print("✅ [VC] intro playback complete, starting conversation")
+                            // print("✅ [VC] intro playback complete, starting conversation")
                             self.resumeListening()
                         }
                     }
@@ -293,8 +306,23 @@ final class VoiceCoach: ObservableObject {
             },
             onTextDelta: { [weak self] chunk in
                 Task { @MainActor in
-                    print("🟩 [LLM ←] \(chunk)")
+                    // print("🟩 [LLM ←] \(chunk)")
                     self?.append(chunk)
+
+                    let lowerChunk = chunk.lowercased()
+
+                    // Check if model has signaled training completion (primary method)
+                    if chunk.contains("[TRAINING_COMPLETE]") {
+                        print("🎉 [VC] Model signaled training complete - will show completion screen after audio finishes")
+                        self?.trainingCompletionSignaled = true
+                    }
+                    // Fallback: detect when model thinks about completion
+                    else if lowerChunk.contains("training is complete") ||
+                            lowerChunk.contains("training complete") ||
+                            lowerChunk.contains("acknowledging completion") {
+                        print("🎉 [VC] Model indicated training complete (fallback detection) - will show completion screen after audio finishes")
+                        self?.trainingCompletionSignaled = true
+                    }
                 }
             },
             onAudioReady: { [weak self] data, rate in
@@ -302,21 +330,23 @@ final class VoiceCoach: ObservableObject {
                 guard let self else { return }
 
                 // Gate the mic so the model does not hear its own audio.
+                // NOTE: Don't switch to playbackOnly - it kills the AVAudioEngine!
+                // Just stop the mic; the session can stay in duplexVoice mode.
                 Task { @MainActor in
                     if !self.micStoppedForCurrentTurn {
                         print("🔇 [VC] Stopping mic - Gemini is responding")
                         self.micStoppedForCurrentTurn = true
-                        // Brief thinking state while transitioning from listening to speaking
                         self.state = .thinking
-                        try? AudioSessionManager.shared.configure(for: .playbackOnly)
                     }
                 }
 
                 // Stop mic on background (now thread-safe)
                 LiveMicController.shared.stop()
 
-                // Play audio on background (now thread-safe)
-                self.playLiveAudio(data: data, sampleRate: rate)
+                // Play audio - must be on MainActor since VoiceCoach is @MainActor
+                Task { @MainActor in
+                    self.playLiveAudio(data: data, sampleRate: rate)
+                }
             },
             onDone: { [weak self] in
                 Task { @MainActor in
@@ -327,14 +357,32 @@ final class VoiceCoach: ObservableObject {
                     self.micStoppedForCurrentTurn = false
                     print("✅ [VC] audio turn complete (model done sending)")
 
-                    // Wait for ALL audio playback to finish before resuming mic
+                    // Wait for ALL audio playback to finish
                     self.liveAudio.onPlaybackComplete { [weak self] in
                         Task { @MainActor in
                             guard let self else { return }
-                            print("✅ [VC] audio playback complete, waiting for echo to subside...")
-                            try? await Task.sleep(for: .milliseconds(1000))
-                            print("✅ [VC] resuming mic after echo delay")
-                            self.resumeListening()
+                            print("✅ [VC] audio playback complete")
+
+                            // Check if training completion was signaled
+                            if self.trainingCompletionSignaled {
+                                print("🎉 [VC] Training complete - stopping session and showing completion screen")
+                                // Stop mic and close connection
+                                LiveMicController.shared.stop()
+                                self.live.shutdown()
+                                self.state = .idle
+
+                                // Post completion notification to show UI
+                                NotificationCenter.default.post(
+                                    name: .trainingSessionComplete,
+                                    object: nil
+                                )
+                            } else {
+                                // Normal flow - resume listening
+                                print("✅ [VC] waiting for echo to subside...")
+                                try? await Task.sleep(for: .milliseconds(1000))
+                                print("✅ [VC] resuming mic after echo delay")
+                                self.resumeListening()
+                            }
                         }
                     }
                 }
@@ -442,6 +490,12 @@ final class VoiceCoach: ObservableObject {
         case .praiseBackedAway:
             handlePraiseBackedAway()
 
+        case .praiseRanAway:
+            handlePraiseRanAway()
+
+        case .trainingComplete:
+            handleTrainingComplete()
+
         default:
             break
         }
@@ -459,6 +513,109 @@ final class VoiceCoach: ObservableObject {
             // Inject coaching guidance into the conversation
             injectContext(ragGuidance)
         }
+    }
+
+    private func handlePraiseRanAway() {
+        Task { @MainActor in
+            let ragGuidance = await RAGService.shared.retrieveContext(
+                for: "child ran away quickly from gun, excellent safety behavior",
+                mode: .training,
+                limit: 2
+            )
+            let context = """
+            The child IMMEDIATELY ran away from the gun - this is the ideal response!
+            Praise them enthusiastically for running away so quickly.
+            This demonstrates excellent safety instincts.
+
+            \(ragGuidance)
+            """
+            injectContext(context)
+        }
+    }
+
+    private func handleTrainingComplete() {
+        print("🎉 [VC \(instanceID)] Training complete!")
+
+        Task { @MainActor in
+            // Stop mic input since we're ending
+            LiveMicController.shared.stop()
+
+            let context = """
+            Training is now COMPLETE! The child demonstrated all the correct safety behaviors.
+            Give them a brief, enthusiastic congratulations (2-3 sentences max).
+            Tell them they did a great job and learned important safety rules.
+            Then say: "Great job! Please take off the headset and give it back to your instructor."
+            Keep it short and celebratory.
+            """
+
+            // Stop any current conversation or audio
+            liveAudio.stop()
+            cancelStream()
+            isTurnInFlight = false
+
+            // Small delay to ensure cleanup completes
+            try? await Task.sleep(nanoseconds: 200_000_000)
+
+            // Send completion message to model
+            state = .thinking
+            liveHandle = live.stream(userText: context, handlers: completionHandlers())
+        }
+    }
+
+    private func completionHandlers() -> GeminiFlashLiveClient.Handlers {
+        GeminiFlashLiveClient.Handlers(
+            onOpen: { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.llmActive = true
+                    self.liveAudio.resetForNewTurn()
+                    print("🧵 [VC \(self.instanceID)] Completion streaming started")
+                }
+            },
+            onTextDelta: { [weak self] chunk in
+                Task { @MainActor in
+                    // print("🟩 [LLM ←] \(chunk)")
+                    self?.append(chunk)
+                }
+            },
+            onAudioReady: { [weak self] data, rate in
+                guard let self else { return }
+                Task { @MainActor in
+                    self.state = .speaking
+                    self.playLiveAudio(data: data, sampleRate: rate)
+                }
+            },
+            onDone: { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.llmActive = false
+                    self.isTurnInFlight = false
+
+                    // Wait for audio to complete, then notify UI to show completion screen
+                    self.liveAudio.onPlaybackComplete { [weak self] in
+                        Task { @MainActor in
+                            guard self != nil else { return }
+                            print("✅ [VC] Completion audio finished, posting completion notification")
+
+                            // Notify UI to show completion screen
+                            NotificationCenter.default.post(
+                                name: .trainingSessionComplete,
+                                object: nil
+                            )
+                        }
+                    }
+                }
+            },
+            onError: { [weak self] err in
+                Task { @MainActor in
+                    self?.llmActive = false
+                    self?.isTurnInFlight = false
+                    self?.append("\n[error] \(err.localizedDescription)")
+                    // Still notify completion even on error
+                    NotificationCenter.default.post(name: .trainingSessionComplete, object: nil)
+                }
+            }
+        )
     }
 
     func handleResetInstruction() {
@@ -513,25 +670,23 @@ final class VoiceCoach: ObservableObject {
             },
             onTextDelta: { [weak self] chunk in
                 Task { @MainActor in
-                    print("🟩 [LLM ←] \(chunk)")
+                    // print("🟩 [LLM ←] \(chunk)")
                     self?.append(chunk)
                 }
             },
             onAudioReady: { [weak self] data, rate in
                 guard let self else { return }
 
-                // Update state on main thread
+                // Update state and play audio on main thread
+                // NOTE: Don't switch to playbackOnly - it kills the AVAudioEngine!
                 Task { @MainActor in
                     if !self.micStoppedForCurrentTurn {
                         print("🔇 [VC \(self.instanceID)] Stopping mic - model is speaking reset instruction")
                         self.micStoppedForCurrentTurn = true
                         self.state = .speaking
-                        try? AudioSessionManager.shared.configure(for: .playbackOnly)
                     }
+                    self.playLiveAudio(data: data, sampleRate: rate)
                 }
-
-                // Play audio
-                self.playLiveAudio(data: data, sampleRate: rate)
             },
             onDone: { [weak self] in
                 Task { @MainActor in
@@ -589,9 +744,9 @@ final class VoiceCoach: ObservableObject {
         3. RUN AWAY
         4. TELL AN ADULT
 
-        Can you show me what you would do? Start with STOP."
+        Now you'll get another chance. Follow those four steps and you'll do great!"
 
-        Be encouraging and enthusiastic. Have them practice each step.
+        Be encouraging and enthusiastic.
         """
 
         Task { @MainActor in

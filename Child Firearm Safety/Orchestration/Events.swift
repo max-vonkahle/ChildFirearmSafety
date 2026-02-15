@@ -10,7 +10,7 @@ import Foundation
 
 // === Cross-layer events ===
 enum SessionPhase {
-    case onboarding, exploration, encounterPending, praisePath, coachingPath, resetLoop, reflection, wrapup
+    case onboarding, exploration, encounterPending, praisePath, coachingPath, resetLoop, reflection, completed, wrapup
 }
 
 enum AREvent {
@@ -18,6 +18,7 @@ enum AREvent {
     case gunProximityNear(distance: Float)
     case reachGesture
     case childBacksAway(delta: Float)
+    case childRunsAway(delta: Float, duration: TimeInterval)  // Faster/further retreat than backing away
     case mappingProgress(percent: Float)
     case userTappedToReset  // User tapped screen to confirm they're back at starting position
 }
@@ -27,6 +28,11 @@ enum VCIntent {
     case askedWhatIsThat(text: String, conf: Float)
     case askedIsThatReal(text: String, conf: Float)
     case generalQuestion(text: String)
+    // Verbal explanations of safety rules during reflection
+    case explainedStop(text: String, conf: Float)
+    case explainedDontTouch(text: String, conf: Float)
+    case explainedRunAway(text: String, conf: Float)
+    case explainedTellAdult(text: String, conf: Float)
 }
 
 // High-level dialogue commands the coach can speak
@@ -34,12 +40,36 @@ enum DialogueIntent {
     case coverStoryIntro
     case neutralExplorationPrompt(area: String?)           // "desk", "window", ...
     case praiseBackedAway
+    case praiseRanAway                                      // Enthusiastic praise for running away
     case coachDontTouchWhy
     case instructReset
     case postResetEncouragement                             // After user taps to reset
     case answerWhatIsThat_safety
     case answerIsThatReal_safety
     case reflectionQ1
+    case trainingComplete                                   // All safety behaviors demonstrated
+}
+
+// === Safety behavior tracking for completion ===
+struct SafetyBehaviorTracker {
+    var explainedStop: Bool = false           // Verbally explained "stop"
+    var explainedDontTouch: Bool = false      // Verbally explained "don't touch"
+    var ranAwayPhysically: Bool = false       // Physically ran/backed away
+    var explainedRunAway: Bool = false        // Verbally explained "run away"
+    var explainedTellAdult: Bool = false      // Verbally explained "tell adult"
+
+    // Run away can be physical OR verbal
+    var runAwayComplete: Bool {
+        ranAwayPhysically || explainedRunAway
+    }
+
+    var allBehaviorsComplete: Bool {
+        explainedStop && explainedDontTouch && runAwayComplete && explainedTellAdult
+    }
+
+    var completedCount: Int {
+        [explainedStop, explainedDontTouch, runAwayComplete, explainedTellAdult].filter { $0 }.count
+    }
 }
 
 // === Notification names (quick bus you already use) ===
@@ -61,6 +91,9 @@ extension Notification.Name {
 
     // Orchestrator → VoiceCoach
     static let vcCommand = Notification.Name("vcCommand")
+
+    // Training session completion
+    static let trainingSessionComplete = Notification.Name("trainingSessionComplete")
 }
 
 // === Payload keys ===

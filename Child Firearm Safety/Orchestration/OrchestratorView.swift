@@ -24,6 +24,8 @@ struct OrchestratorView: View {
     @State private var showStartPrompt = false
     @State private var showCamera = false
     @State private var hasConfiguredObserver = false
+    @State private var showCompletionScreen = false
+    @State private var completionObserver: NSObjectProtocol?
 
     var body: some View {
         Group {
@@ -97,6 +99,15 @@ struct OrchestratorView: View {
                             coach.startSession()
                         }
                     }
+
+                    if showCompletionScreen {
+                        TrainingCompleteView {
+                            showCompletionScreen = false
+                            stopSession()
+                            dismiss()
+                        }
+                        .transition(.opacity)
+                    }
                 }
                 .onAppear {
                     showHeadsetInstruction = cardboardMode
@@ -136,6 +147,19 @@ struct OrchestratorView: View {
                 }
             }
         }
+
+        // Listen for training completion notification
+        if completionObserver == nil {
+            completionObserver = NotificationCenter.default.addObserver(
+                forName: .trainingSessionComplete,
+                object: nil,
+                queue: .main
+            ) { _ in
+                withAnimation {
+                    showCompletionScreen = true
+                }
+            }
+        }
     }
 
     private func changeRoom() {
@@ -158,10 +182,18 @@ struct OrchestratorView: View {
 
         NotificationCenter.default.removeObserver(self, name: .assetsConfigured, object: nil)
         hasConfiguredObserver = false
+
+        // Clean up completion observer
+        if let observer = completionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            completionObserver = nil
+        }
+
         showHeadsetInstruction = false
         showLoadingScreen = true
         showStartPrompt = false
         showCamera = false
+        showCompletionScreen = false
     }
 
     private func phaseLabel(_ p: SessionPhase) -> String {
@@ -173,6 +205,7 @@ struct OrchestratorView: View {
         case .coachingPath: return "Coaching"
         case .resetLoop: return "Resetting"
         case .reflection: return "Reflection"
+        case .completed: return "Completed"
         case .wrapup: return "Wrap-up"
         }
     }

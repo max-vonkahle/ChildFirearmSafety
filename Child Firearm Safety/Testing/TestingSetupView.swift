@@ -356,7 +356,7 @@ final class TestingWallSelectorViewController: UIViewController {
         state.instructionText  = "All assets cleared"
         state.instructionStyle = .secondary
         state.hasKitchen       = false
-        print("✅ Cleared all placed assets")
+        // print("✅ Cleared all placed assets")
     }
 
     private func skipWall() {
@@ -364,7 +364,7 @@ final class TestingWallSelectorViewController: UIViewController {
         state.instructionStyle = .success
         state.showSkipButton   = false
         waitingForKitchenWall  = false
-        print("⏭️ Skipped kitchen wall anchoring")
+        // print("⏭️ Skipped kitchen wall anchoring")
     }
 
     // MARK: - Tap Handling
@@ -410,7 +410,7 @@ final class TestingWallSelectorViewController: UIViewController {
         )
         if let result = planeResults.first {
             targetTransform = result.worldTransform
-            print("📍 Kitchen placed on floor at Y: \(result.worldTransform.columns.3.y)")
+            // print("📍 Kitchen placed on floor at Y: \(result.worldTransform.columns.3.y)")
         }
 
         guard var finalTransform = targetTransform else {
@@ -439,7 +439,7 @@ final class TestingWallSelectorViewController: UIViewController {
         do {
             let kitchenModel = try ModelEntity.loadModel(contentsOf: kitchenURL)
             kitchenModel.generateCollisionShapes(recursive: true)
-            print("✅ Generated collision shapes for kitchen")
+            // print("✅ Generated collision shapes for kitchen")
 
             let anchor = AnchorEntity(world: finalTransform)
             anchor.addChild(kitchenModel)
@@ -454,7 +454,7 @@ final class TestingWallSelectorViewController: UIViewController {
             placedAssetTransforms["kitchen"] = finalTransform
             placedAssetAnchors["kitchen"]    = anchor
 
-            print("✅ Placed kitchen at Y level: \(finalTransform.columns.3.y)")
+            // print("✅ Placed kitchen at Y level: \(finalTransform.columns.3.y)")
 
             // Prompt to select wall for kitchen
             waitingForKitchenWall          = true
@@ -513,7 +513,7 @@ final class TestingWallSelectorViewController: UIViewController {
             wallNormal = -wallNormal
         }
 
-        print("🧱 Wall normal (toward kitchen): \(wallNormal)")
+        // print("🧱 Wall normal (toward kitchen): \(wallNormal)")
 
         // Orient kitchen perpendicular to wall:
         //   local +Z = -wallNormal  (back of kitchen faces into the wall)
@@ -535,7 +535,7 @@ final class TestingWallSelectorViewController: UIViewController {
         let snappedPos  = kitchenPosition - distToWall * wallNormal
         newTransformMatrix.columns.3 = SIMD4<Float>(snappedPos.x, kitchenPosition.y, snappedPos.z, 1.0)
 
-        print("📍 Snapped kitchen to wall: distToWall=\(distToWall)m, pos=(\(snappedPos.x), \(kitchenPosition.y), \(snappedPos.z))")
+        // print("📍 Snapped kitchen to wall: distToWall=\(distToWall)m, pos=(\(snappedPos.x), \(kitchenPosition.y), \(snappedPos.z))")
 
         // Re-anchor kitchen
         arView.scene.removeAnchor(kitchenAnchor)
@@ -545,7 +545,7 @@ final class TestingWallSelectorViewController: UIViewController {
         arView.scene.addAnchor(newAnchor)
 
         if !kitchenModel.components.has(CollisionComponent.self) {
-            print("⚠️ Collision lost during re-anchor, regenerating...")
+            // print("⚠️ Collision lost during re-anchor, regenerating...")
             kitchenModel.generateCollisionShapes(recursive: true)
         }
 
@@ -557,7 +557,7 @@ final class TestingWallSelectorViewController: UIViewController {
         let relativeOffset = SIMD3<Float>(0.5823, 0.8431, -2.5297)
         let gunTransform   = calculateGunTransform(kitchenTransform: newTransformMatrix, relativeOffset: relativeOffset)
         placedAssetTransforms["gun"] = gunTransform
-        print("✅ Recalculated gun transform after kitchen re-anchor")
+        // print("✅ Recalculated gun transform after kitchen re-anchor")
 
         // Load and place gun model at calculated position
         if let gunURL = Bundle.main.url(forResource: "gun", withExtension: "usdz") {
@@ -590,7 +590,7 @@ final class TestingWallSelectorViewController: UIViewController {
             }
         }
 
-        print("✅ Kitchen snapped perpendicular to wall")
+        // print("✅ Kitchen snapped perpendicular to wall")
 
         // Update UI state
         state.instructionText  = "Kitchen anchored to wall ✓"
@@ -604,8 +604,8 @@ final class TestingWallSelectorViewController: UIViewController {
     @objc private func handleSaveNotification(_ notification: Notification) {
         guard let roomId = notification.userInfo?["roomId"] as? String else { return }
 
-        print("💾 Saving testing room '\(roomId)'...")
-        print("   Capturing ARWorldMap...")
+        // print("💾 Saving testing room '\(roomId)'...")
+        // print("   Capturing ARWorldMap...")
 
         // Get current world map from AR session
         arView.session.getCurrentWorldMap { [weak self] worldMap, error in
@@ -649,9 +649,9 @@ final class TestingWallSelectorViewController: UIViewController {
                 return
             }
 
-            print("✅ World map captured successfully")
-            print("   Anchors: \(worldMap.anchors.count)")
-            print("   Assets: \(self.placedAssetTransforms.count)")
+            // print("✅ World map captured successfully")
+            // print("   Anchors: \(worldMap.anchors.count)")
+            // print("   Assets: \(self.placedAssetTransforms.count)")
 
             // Save the room data with world map and asset transforms
             RoomLibrary.saveTestingRoom(
@@ -719,12 +719,12 @@ final class TestingWallSelectorViewController: UIViewController {
                 placedAssetAnchors["gun"] = gunAnchor
             }
 
-            print("✅ Loaded kitchen at saved position")
+            // print("✅ Loaded kitchen at saved position")
         } catch {
             print("❌ Failed to load kitchen model: \(error)")
         }
 
-        state.instructionText  = "Loaded: \(roomId) with \(assetTransforms.count) assets"
+        state.instructionText = "Loaded: \(roomId) with \(assetTransforms.count) assets"
         state.instructionStyle = .primary
         state.hasKitchen       = true
     }
