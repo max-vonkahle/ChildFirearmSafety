@@ -16,6 +16,7 @@ struct SetupView: View {
     @State private var isArmed = false
     @State private var clearTick = 0
     @State private var selectedAsset: String? = nil
+    @State private var hasPlacedAssets = false
 
     // Save popup (Create mode)
     @State private var showSaveSheet = false
@@ -31,6 +32,9 @@ struct SetupView: View {
     // Overlay controls visibility
     @State private var showControls = false
     @State private var autoHideTask: Task<Void, Never>? = nil
+
+    // Shared UI state
+    @StateObject private var uiState = SetupUIState()
 
     var body: some View {
         Group {
@@ -60,7 +64,21 @@ struct SetupView: View {
                         onSceneTap: handleSceneTap,
                         onExit: performExit
                     ) {
-                        if showControls { controlsOverlay }
+                        VStack {
+                            if mode == .create {
+                                SetupInstructionOverlay(
+                                    state: uiState,
+                                    steps: [
+                                        "Move device around to scan the area",
+                                        "Tap screen to show controls",
+                                        "Place table (gun auto-places on top)",
+                                        "Save room when finished"
+                                    ]
+                                )
+                            }
+                            Spacer()
+                            if showControls { controlsOverlay }
+                        }
                     }
                 }
                 .ignoresSafeArea()
@@ -76,6 +94,16 @@ struct SetupView: View {
             if !isShowing {
                 roomNames = RoomLibrary.savedRooms()
             }
+        }
+        .onChange(of: isArmed) { oldValue, newValue in
+            // When isArmed goes from true to false, it means placement happened
+            if oldValue == true && newValue == false {
+                hasPlacedAssets = true
+            }
+        }
+        .onChange(of: clearTick) { _, _ in
+            // When clear is triggered, reset the placement flag
+            hasPlacedAssets = false
         }
     }
 
@@ -112,46 +140,20 @@ struct SetupView: View {
     @ViewBuilder
     private var controlsOverlay: some View {
         if mode == .create {
-            HStack(spacing: 12) {
-                Button {
+            SetupControlButtons(
+                onClear: {
                     clearTick &+= 1
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(12)
-                }
-
-                Menu {
-                    Button("Place Table") {
-                        selectedAsset = "table"
-                        isArmed = true
-                    }
-                    Button("Place Gun") {
-                        selectedAsset = "gun"
-                        isArmed = true
-                    }
-                } label: {
-                    Label("Place",
-                          systemImage: "plus.circle")
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(Color.blue.opacity(0.25))
-                        .cornerRadius(12)
-                }
-
-                Button {
+                },
+                onPlace: {
+                    selectedAsset = "table"
+                    isArmed = true
+                },
+                onSave: {
                     showSaveSheet = true
-                } label: {
-                    Label("Save Room", systemImage: "square.and.arrow.down")
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(12)
-                }
-            }
-            .padding()
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .padding(.bottom, 16)
+                },
+                isArmed: isArmed,
+                canSave: hasPlacedAssets
+            )
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .animation(.easeInOut(duration: 0.2), value: showControls)
         } else {

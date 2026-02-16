@@ -18,14 +18,18 @@ final class LiveAudioPlayer {
     private let audioQueue = DispatchQueue(label: "com.childgunsafety.audioplayback", qos: .userInteractive)
 
     // Peak normalization settings
-    private var normalizationEnabled = true
+    // TOGGLE THIS: Set to false to disable normalization and use raw model audio
+    private var normalizationEnabled = false  // Disabled - raw model audio sounds better with earbuds
     private let targetPeakLevel: Float = 0.8
-    private let minPeakThreshold: Float = 0.05
+    private let minPeakThreshold: Float = 0.00001  // Lowered to -100dB to catch extremely quiet model output
 
     // Track scheduled vs completed buffers to know when playback finishes
     private var scheduledBuffers = 0
     private var completedBuffers = 0
     private var playbackCompletionHandler: (() -> Void)?
+
+    // Audio level statistics for current turn
+    private var turnStats = AudioTurnStats()
 
     private init() {
         // Use a fixed 24 kHz mono float format for live Gemini audio.
@@ -67,13 +71,23 @@ final class LiveAudioPlayer {
             }
         }
 
+        // Track statistics
+        turnStats.totalBuffers += 1
+        turnStats.peakLevels.append(peak)
+
         // Only normalize if peak is significant
-        guard peak > minPeakThreshold else { return }
+        guard peak > minPeakThreshold else {
+            turnStats.skippedBuffers += 1
+            return
+        }
 
         // Calculate gain with soft limiting
         let gain = targetPeakLevel / peak
-        let maxGain: Float = 4.0  // Max 12dB boost
+        let maxGain: Float = 6.0  // Max 15.6dB boost - higher values create fuzzy artifacts
         let effectiveGain = min(gain, maxGain)
+
+        // Track gain stats
+        turnStats.gainsApplied.append(effectiveGain)
 
         // Apply gain to all channels
         for ch in 0..<channelCount {
@@ -82,12 +96,6 @@ final class LiveAudioPlayer {
                 channel[i] *= effectiveGain
             }
         }
-
-        #if DEBUG
-//        if effectiveGain > 1.5 || effectiveGain < 0.7 {
-//            print("[Audio] Normalized: peak=\(peak) → gain=\(effectiveGain)x")
-//        }
-        #endif
     }
 
     /// Play a chunk of raw PCM16 mono audio.
@@ -151,7 +159,6 @@ final class LiveAudioPlayer {
                 print("⚠️ [Audio] Engine was stopped! Restarting...")
                 do {
                     try self.engine.start()
-                    // print("✅ [Audio] Engine restarted")
                 } catch {
                     print("❌ [Audio] Failed to restart engine: \(error)")
                 }
@@ -171,7 +178,7 @@ final class LiveAudioPlayer {
                     // If all scheduled buffers have completed, call the completion handler
                     if self.completedBuffers == self.scheduledBuffers {
                         if let handler = self.playbackCompletionHandler {
-                            // print("✅ [Audio] All \(self.completedBuffers) buffers complete")
+                            self.printTurnSummary()
                             self.playbackCompletionHandler = nil
                             DispatchQueue.main.async {
                                 handler()
@@ -206,7 +213,55 @@ final class LiveAudioPlayer {
             self.scheduledBuffers = 0
             self.completedBuffers = 0
             self.playbackCompletionHandler = nil
+            self.turnStats = AudioTurnStats()
         }
+    }
+
+    private func printTurnSummary() {
+        #if DEBUG
+        guard turnStats.totalBuffers > 0 else { return }
+
+        let peaks = turnStats.peakLevels
+        let gains = turnStats.gainsApplied
+
+        let minPeak = peaks.min() ?? 0
+        let maxPeak = peaks.max() ?? 0
+        let avgPeak = peaks.reduce(0, +) / Float(peaks.count)
+
+        let minPeakDB = minPeak > 0 ? 20 * log10(minPeak) : -100.0
+        let maxPeakDB = maxPeak > 0 ? 20 * log10(maxPeak) : -100.0
+        let avgPeakDB = avgPeak > 0 ? 20 * log10(avgPeak) : -100.0
+
+        // Categorize buffers by level
+        let veryQuiet = peaks.filter { $0 < 0.01 }.count  // < -40dB
+        let quiet = peaks.filter { $0 >= 0.01 && $0 < 0.1 }.count  // -40dB to -20dB
+        let normal = peaks.filter { $0 >= 0.1 && $0 < 0.5 }.count  // -20dB to -6dB
+        let loud = peaks.filter { $0 >= 0.5 }.count  // > -6dB
+
+        var summary = """
+
+        🔊 [Audio Turn Summary]
+        📊 Buffers: \(turnStats.totalBuffers) total, \(turnStats.skippedBuffers) skipped
+        📈 Peak levels: min=\(String(format: "%.4f", minPeak)) (\(String(format: "%.1f", minPeakDB))dB), max=\(String(format: "%.4f", maxPeak)) (\(String(format: "%.1f", maxPeakDB))dB), avg=\(String(format: "%.4f", avgPeak)) (\(String(format: "%.1f", avgPeakDB))dB)
+        📊 Distribution: \(veryQuiet) very quiet (<-40dB), \(quiet) quiet (-40 to -20dB), \(normal) normal (-20 to -6dB), \(loud) loud (>-6dB)
+        """
+
+        if !gains.isEmpty {
+            let minGain = gains.min() ?? 1.0
+            let maxGain = gains.max() ?? 1.0
+            let avgGain = gains.reduce(0, +) / Float(gains.count)
+            let minGainDB = 20 * log10(minGain)
+            let maxGainDB = 20 * log10(maxGain)
+            let avgGainDB = 20 * log10(avgGain)
+
+            summary += """
+
+            🎚️ Gain applied: min=\(String(format: "%.1f", minGain))x (\(String(format: "%.1f", minGainDB))dB), max=\(String(format: "%.1f", maxGain))x (\(String(format: "%.1f", maxGainDB))dB), avg=\(String(format: "%.1f", avgGain))x (\(String(format: "%.1f", avgGainDB))dB)
+            """
+        }
+
+        print(summary)
+        #endif
     }
 
     func stop() {
@@ -219,4 +274,13 @@ final class LiveAudioPlayer {
             self.playbackCompletionHandler = nil
         }
     }
+}
+
+// MARK: - Audio Statistics
+
+private struct AudioTurnStats {
+    var totalBuffers: Int = 0
+    var skippedBuffers: Int = 0
+    var peakLevels: [Float] = []
+    var gainsApplied: [Float] = []
 }

@@ -15,28 +15,12 @@ enum TestingSetupMode { case create, load }
 // MARK: - Shared UI State
 
 final class TestingSetupState: ObservableObject {
-    @Published var instructionText  = ""
-    @Published var instructionStyle = InstructionStyle.neutral
-    @Published var showSkipButton   = false
-    @Published var hasKitchen       = false
+    @Published var hasKitchen = false
+    @Published var uiState = SetupUIState()
 
     // Actions wired by the VC at viewDidLoad
     var placeKitchenAction: (() -> Void)?
     var clearAction:        (() -> Void)?
-    var skipAction:         (() -> Void)?
-
-    enum InstructionStyle {
-        case neutral, primary, success, secondary
-
-        var color: Color {
-            switch self {
-            case .neutral:   return .black.opacity(0.6)
-            case .primary:   return .blue.opacity(0.7)
-            case .success:   return .green.opacity(0.7)
-            case .secondary: return .orange.opacity(0.7)
-            }
-        }
-    }
 }
 
 // MARK: - Top-level View
@@ -54,6 +38,10 @@ struct TestingSetupView: View {
 
     @StateObject private var setupState = TestingSetupState()
     @Environment(\.dismiss) private var dismiss
+
+    // Control visibility (tap to show/hide)
+    @State private var showControls = false
+    @State private var autoHideTask: Task<Void, Never>? = nil
 
     var body: some View {
         Group {
@@ -84,19 +72,54 @@ struct TestingSetupView: View {
     // MARK: - AR Scene + SwiftUI Overlays
 
     private var arScene: some View {
-        TestingWallSelectorView(
-            roomId: mode == .load ? selectedRoom : nil,
-            state: setupState,
-            onExit: { dismiss() },
-            onSaveError: { error in
-                saveErrorMessage = error
-                showScanMoreAlert = true
+        ZStack {
+            TestingWallSelectorView(
+                roomId: mode == .load ? selectedRoom : nil,
+                state: setupState,
+                onExit: { dismiss() },
+                onSaveError: { error in
+                    saveErrorMessage = error
+                    showScanMoreAlert = true
+                }
+            )
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    handleTap()
+                }
+            )
+
+            VStack {
+                if mode == .create {
+                    SetupInstructionOverlay(
+                        state: setupState.uiState,
+                        steps: [
+                            "Move device around to scan the area",
+                            "Tap screen to show controls",
+                            "Tap Place to add kitchen on the floor",
+                            "Tap wall behind kitchen to anchor it",
+                            "Save room when finished"
+                        ]
+                    )
+                }
+
+                Spacer()
+
+                if showControls {
+                    controlsOverlay
+                }
             }
-        )
+
+            if showControls {
+                VStack {
+                    HStack {
+                        Spacer()
+                        exitButton
+                    }
+                    Spacer()
+                }
+            }
+        }
         .ignoresSafeArea()
-        .overlay(alignment: .top)         { instructionOverlay }
-        .overlay(alignment: .topTrailing) { exitButton         }
-        .overlay(alignment: .bottom)      { controlsOverlay    }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showSaveSheet) { saveSheet }
         .alert("Need More Scanning", isPresented: $showScanMoreAlert) {
@@ -104,39 +127,45 @@ struct TestingSetupView: View {
         } message: {
             Text(saveErrorMessage)
         }
-    }
-
-    // MARK: - Instruction pill + optional Skip button
-
-    private var instructionOverlay: some View {
-        VStack(spacing: 12) {
-            Text(setupState.instructionText)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(setupState.instructionStyle.color)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-
-            if setupState.showSkipButton {
-                Button("Skip") {
-                    setupState.skipAction?()
-                }
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
-                .background(Color.orange.opacity(0.7))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
+        .onDisappear {
+            cleanupAutoHide()
         }
-        .padding(.top, 60)
     }
 
-    // MARK: - Exit button (matches ARSceneView / TestingOrchestratorView)
+    // MARK: - Tap Handling
+
+    private func handleTap() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showControls.toggle()
+        }
+        if showControls {
+            scheduleAutoHideControls()
+        } else {
+            cleanupAutoHide()
+        }
+    }
+
+    private func scheduleAutoHideControls() {
+        autoHideTask?.cancel()
+        autoHideTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showControls = false
+            }
+            autoHideTask = nil
+        }
+    }
+
+    private func cleanupAutoHide() {
+        autoHideTask?.cancel()
+        autoHideTask = nil
+    }
+
+    // MARK: - Exit button
 
     private var exitButton: some View {
         Button {
+            cleanupAutoHide()
             dismiss()
         } label: {
             Image(systemName: "xmark.circle.fill")
@@ -145,46 +174,29 @@ struct TestingSetupView: View {
                 .background(.ultraThinMaterial, in: Circle())
         }
         .accessibilityLabel("Exit")
+        .transition(.opacity.combined(with: .scale))
         .padding(.top, 44)
         .padding(.trailing, 16)
     }
 
-    // MARK: - Bottom toolbar (matches SetupView.controlsOverlay)
+    // MARK: - Bottom toolbar
 
     private var controlsOverlay: some View {
-        HStack(spacing: 12) {
-            Button {
-                setupState.placeKitchenAction?()
-            } label: {
-                Label("Place", systemImage: "cube")
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Color.blue.opacity(0.25))
-                    .cornerRadius(12)
-            }
-
-            Button {
+        SetupControlButtons(
+            onClear: {
                 setupState.clearAction?()
-            } label: {
-                Label("Clear", systemImage: "trash")
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
-            }
-
-            Button {
+            },
+            onPlace: {
+                setupState.placeKitchenAction?()
+            },
+            onSave: {
                 showSaveSheet = true
-            } label: {
-                Label("Save Room", systemImage: "square.and.arrow.down")
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
-            }
-            .disabled(!setupState.hasKitchen)
-        }
-        .padding()
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .padding(.bottom, 20)
+            },
+            canSave: setupState.hasKitchen,
+            placeLabel: "Place"
+        )
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .animation(.easeInOut(duration: 0.2), value: showControls)
     }
 
     // MARK: - Save Sheet
@@ -279,7 +291,6 @@ final class TestingWallSelectorViewController: UIViewController {
         // Wire the SwiftUI toolbar buttons back into this VC
         state.placeKitchenAction = { [weak self] in self?.placeKitchen() }
         state.clearAction        = { [weak self] in self?.clearAssets()  }
-        state.skipAction         = { [weak self] in self?.skipWall()     }
 
         if let roomId = roomId {
             loadTestingRoom(roomId)
@@ -341,8 +352,6 @@ final class TestingWallSelectorViewController: UIViewController {
     private func placeKitchen() {
         isArmed       = true
         selectedAsset = "kitchen"
-        state.instructionText  = "Tap the floor to place the "
-        state.instructionStyle = .primary
     }
 
     private func clearAssets() {
@@ -353,18 +362,8 @@ final class TestingWallSelectorViewController: UIViewController {
         placedAssetTransforms.removeAll()
         placedAssetAnchors.removeAll()
 
-        state.instructionText  = "All assets cleared"
-        state.instructionStyle = .secondary
-        state.hasKitchen       = false
+        state.hasKitchen = false
         // print("✅ Cleared all placed assets")
-    }
-
-    private func skipWall() {
-        state.instructionText  = "Kitchen placed (no wall anchor)"
-        state.instructionStyle = .success
-        state.showSkipButton   = false
-        waitingForKitchenWall  = false
-        // print("⏭️ Skipped kitchen wall anchoring")
     }
 
     // MARK: - Tap Handling
@@ -399,6 +398,24 @@ final class TestingWallSelectorViewController: UIViewController {
         }
 
         guard isArmed, selectedAsset == "kitchen" else { return }
+
+        // Check world mapping status before allowing placement
+        if let frame = arView.session.currentFrame {
+            let status = frame.worldMappingStatus
+            if status == .notAvailable || status == .limited {
+                let message: String
+                if status == .notAvailable {
+                    message = "Cannot place kitchen yet.\n\nPlease move your device slowly around the area to scan surfaces and create spatial anchors."
+                } else {
+                    message = "Insufficient scanning detected.\n\nMove your device around to scan more of the floor, walls, and surrounding area before placing the kitchen.\n\nMapping status: \(statusDescription(status))"
+                }
+
+                DispatchQueue.main.async { [weak self] in
+                    self?.showScanningAlert(message: message)
+                }
+                return
+            }
+        }
 
         var targetTransform: simd_float4x4?
 
@@ -441,6 +458,9 @@ final class TestingWallSelectorViewController: UIViewController {
             kitchenModel.generateCollisionShapes(recursive: true)
             // print("✅ Generated collision shapes for kitchen")
 
+            // Kitchen model pivot is already at ground level - no offset needed
+            // kitchenModel.position = [0, -0.05, 0]
+
             let anchor = AnchorEntity(world: finalTransform)
             anchor.addChild(kitchenModel)
             arView.scene.addAnchor(anchor)
@@ -457,11 +477,8 @@ final class TestingWallSelectorViewController: UIViewController {
             // print("✅ Placed kitchen at Y level: \(finalTransform.columns.3.y)")
 
             // Prompt to select wall for kitchen
-            waitingForKitchenWall          = true
-            state.instructionText          = "Tap a wall behind the kitchen to anchor it"
-            state.instructionStyle         = .primary
-            state.showSkipButton           = true
-            state.hasKitchen               = true
+            waitingForKitchenWall = true
+            state.hasKitchen      = true
 
             isArmed       = false
             selectedAsset = nil
@@ -576,7 +593,7 @@ final class TestingWallSelectorViewController: UIViewController {
                 }
 
                 let rotX = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-                let rotZ = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(0, 0, 1))
+                let rotZ = simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(0, 0, 1))
                 gunModel.orientation = rotZ * rotX
 
                 let gunAnchor = AnchorEntity(world: gunTransform)
@@ -593,10 +610,7 @@ final class TestingWallSelectorViewController: UIViewController {
         // print("✅ Kitchen snapped perpendicular to wall")
 
         // Update UI state
-        state.instructionText  = "Kitchen anchored to wall ✓"
-        state.instructionStyle = .success
-        state.showSkipButton   = false
-        waitingForKitchenWall  = false
+        waitingForKitchenWall = false
     }
 
     // MARK: - Save
@@ -673,6 +687,36 @@ final class TestingWallSelectorViewController: UIViewController {
         guard let roomData = RoomLibrary.loadTestingRoom(roomId: roomId) else { return }
         let assetTransforms = roomData.assets
 
+        // CRITICAL: Load the world map to establish correct coordinate system
+        let config = ARWorldTrackingConfiguration()
+        config.planeDetection = [.horizontal, .vertical]
+        config.environmentTexturing = .automatic
+        config.initialWorldMap = roomData.worldMap
+
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            config.sceneReconstruction = .mesh
+            arView.environment.sceneUnderstanding.options.insert(.occlusion)
+        }
+
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+            config.frameSemantics.insert(.sceneDepth)
+        }
+
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
+            config.frameSemantics.insert(.personSegmentationWithDepth)
+        } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentation) {
+            config.frameSemantics.insert(.personSegmentation)
+        }
+
+        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+
+        // Store transforms for later placement (after relocalization)
+        placedAssetTransforms = assetTransforms
+
+        // Don't place assets immediately - wait for relocalization
+        // Assets will be placed via session(_:didAdd:) when world map anchors are restored
+        // or we can add a relocalization check similar to TestingARViewController
+
         guard let kitchenTransform = assetTransforms["kitchen"],
               let kitchenURL       = Bundle.main.url(forResource: "kitchen", withExtension: "usdz") else { return }
 
@@ -680,12 +724,14 @@ final class TestingWallSelectorViewController: UIViewController {
             let kitchenModel = try ModelEntity.loadModel(contentsOf: kitchenURL)
             kitchenModel.generateCollisionShapes(recursive: true)
 
+            // Kitchen model pivot is already at ground level - no offset needed
+            // kitchenModel.position = [0, -0.05, 0]
+
             let anchor = AnchorEntity(world: kitchenTransform)
             anchor.addChild(kitchenModel)
             arView.scene.addAnchor(anchor)
 
             placedAssets["kitchen"]          = kitchenModel
-            placedAssetTransforms["kitchen"] = kitchenTransform
             placedAssetAnchors["kitchen"]    = anchor
 
             // Calculate or load gun position
@@ -708,7 +754,7 @@ final class TestingWallSelectorViewController: UIViewController {
                 }
 
                 let rotX = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-                let rotZ = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(0, 0, 1))
+                let rotZ = simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(0, 0, 1))
                 gunModel.orientation = rotZ * rotX
 
                 let gunAnchor = AnchorEntity(world: gunTransform)
@@ -724,9 +770,41 @@ final class TestingWallSelectorViewController: UIViewController {
             print("❌ Failed to load kitchen model: \(error)")
         }
 
-        state.instructionText = "Loaded: \(roomId) with \(assetTransforms.count) assets"
-        state.instructionStyle = .primary
-        state.hasKitchen       = true
+        state.hasKitchen = true
+    }
+
+    private func statusDescription(_ status: ARFrame.WorldMappingStatus) -> String {
+        switch status {
+        case .notAvailable: return "Not Available"
+        case .limited: return "Limited"
+        case .extending: return "Extending"
+        case .mapped: return "Mapped"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    private func showScanningAlert(message: String) {
+        DispatchQueue.main.async {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let rootViewController = windowScene.windows.first?.rootViewController else {
+                return
+            }
+
+            let alert = UIAlertController(
+                title: "Scan More Area",
+                message: message,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+
+            // Find the topmost presented view controller
+            var topController = rootViewController
+            while let presented = topController.presentedViewController {
+                topController = presented
+            }
+
+            topController.present(alert, animated: true)
+        }
     }
 
     deinit {

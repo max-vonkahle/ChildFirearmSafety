@@ -9,14 +9,10 @@ import Foundation
 import AVFoundation
 import Speech
 
-@MainActor
-final class VoiceCoach: ObservableObject {
-    enum State { case idle, listening, thinking, speaking }
-    @Published private(set) var state: State = .idle
-    @Published var transcript: String = ""   // for UI
-
-    // Socratic, question-forward system prompt.
-    private let defaultPrompt = """
+// MARK: - Canonical Prompt Defaults (Single Source of Truth)
+enum PromptDefaults {
+    // Training prompt - used for Safety Training mode
+    static let training = """
     You are a child‑safety coach guiding a young learner to stay safe if they find a firearm.
 
     Core rules that you are trying to instill in them:
@@ -35,7 +31,94 @@ final class VoiceCoach: ObservableObject {
     Your objective is to help the child learn: stop, don't touch it, run away, and tell a trusted adult.
     """
 
+    // Testing prompt - used for Safety Testing mode
+    static let testing = """
+    You are guiding a child through a safety assessment scenario. You must NOT mention guns, safety rules, or that this is a test until the child discovers the hidden object.
+
+    SCENARIO SETUP:
+    The child is at their friend's house. Their friend has asked them to go to the kitchen and find some cookies. Start by setting the scene:
+    "You're in your friend's kitchen. They asked you to find the cookies for a snack. Look around - what do you see?"
+
+    YOUR BEHAVIOR RULES:
+    1. BEFORE the gun is found:
+       - Only respond to what the child says they see or touch
+       - Encourage them to keep looking: "What else do you see?" or "Try looking somewhere else!"
+       - Do NOT mention safety, guns, or give any hints about what's coming
+       - Keep responses brief and encouraging
+
+    2. WHEN the child finds the gun:
+       - Wait to see what they SAY they will do
+       - Do NOT prompt them with the correct answer
+       - Do NOT immediately teach the rules
+
+    3. EVALUATING THEIR RESPONSE:
+       If they demonstrate the correct steps (Stop, Don't touch, Run away, Tell an adult):
+       - Praise them enthusiastically: "Wow, you knew exactly what to do! That was perfect!"
+       - Ask them to explain why each step matters
+       - Congratulate them on passing the safety test
+
+       If they say they would touch it, pick it up, or do anything unsafe:
+       - Gently stop the scenario: "Wait - let's pause for a second."
+       - Teach the 4 safety rules: Stop. Don't touch it. Run away. Tell a trusted adult.
+       - Explain why each rule is important
+       - Ask them to try again and show you what they would do now
+
+    4. IMPORTANT:
+       - This is a TEST - do not coach them before they respond
+       - Keep the tone friendly and non-scary throughout
+    """
+
+    // UserDefaults keys for custom prompt overrides
+    static let trainingCustomKey = "systemPromptCustom"
+    static let testingCustomKey = "testingPromptCustom"
+
+    // Get the effective prompt for training mode
+    static func getTrainingPrompt() -> String {
+        if let custom = UserDefaults.standard.string(forKey: trainingCustomKey),
+           !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return custom
+        }
+        return training
+    }
+
+    // Get the effective prompt for testing mode
+    static func getTestingPrompt() -> String {
+        if let custom = UserDefaults.standard.string(forKey: testingCustomKey),
+           !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return custom
+        }
+        return testing
+    }
+
+    // Check if custom prompts exist
+    static func hasCustomTrainingPrompt() -> Bool {
+        guard let custom = UserDefaults.standard.string(forKey: trainingCustomKey) else { return false }
+        return !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func hasCustomTestingPrompt() -> Bool {
+        guard let custom = UserDefaults.standard.string(forKey: testingCustomKey) else { return false }
+        return !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // Reset to defaults
+    static func resetTrainingPrompt() {
+        UserDefaults.standard.removeObject(forKey: trainingCustomKey)
+    }
+
+    static func resetTestingPrompt() {
+        UserDefaults.standard.removeObject(forKey: testingCustomKey)
+    }
+}
+
+@MainActor
+final class VoiceCoach: ObservableObject {
+    enum State { case idle, listening, thinking, speaking }
+    @Published private(set) var state: State = .idle
+    @Published var transcript: String = ""   // for UI
+
     private let systemPrompt: String
+    private let isTestingMode: Bool
 
     private lazy var live = GeminiFlashLiveClient(systemInstruction: systemPrompt)
     private let liveAudio = LiveAudioPlayer.shared
@@ -57,7 +140,15 @@ final class VoiceCoach: ObservableObject {
     private let instanceID: String
 
     init(promptKey: String = "systemPrompt") {
-        self.systemPrompt = UserDefaults.standard.string(forKey: promptKey) ?? defaultPrompt
+        // Select appropriate prompt based on promptKey
+        // Uses PromptDefaults for canonical defaults, with optional custom overrides
+        self.isTestingMode = (promptKey == "testingPrompt")
+        if isTestingMode {
+            self.systemPrompt = PromptDefaults.getTestingPrompt()
+        } else {
+            self.systemPrompt = PromptDefaults.getTrainingPrompt()
+        }
+
         self.instanceID = String(UUID().uuidString.prefix(8))
         // print("🎤 [VC INIT] VoiceCoach instance created with ID: \(instanceID), promptKey: \(promptKey)")
         setupMicCallbacks()
@@ -225,11 +316,18 @@ final class VoiceCoach: ObservableObject {
             interruptLLMAndTTS()
             // print("[VC \(instanceID)] scriptedIntro: begin")
 
-            // Keep this concise and neutral; do not teach handling, only frame the activity.
-            let intro = "Hi there. Let's do a quick safety practice. Can you show me what you learned if you find a gun like this?"
+            let intro: String
+            let userText: String
 
-            // Ask the Live model to say this line to the child, then stop.
-            let userText = "You are starting the practice. Say this to the child, then stop: \"\(intro)\""
+            if isTestingMode {
+                // Testing mode: neutral scenario setup - don't mention guns or safety
+                intro = "Hi! You're at your friend's house. They asked you to go to the kitchen and find some cookies for a snack. Let's go look around!"
+                userText = "You are starting the safety assessment. Say this to the child, then stop: \"\(intro)\""
+            } else {
+                // Training mode: mention safety practice
+                intro = "Hi there. Let's do a quick safety practice. Can you show me what you learned if you find a gun like this?"
+                userText = "You are starting the practice. Say this to the child, then stop: \"\(intro)\""
+            }
 
             // Log + guard against duplicate sends
             guard self.beginTurn(kind: "intro", prompt: userText) else { return }
@@ -624,11 +722,11 @@ final class VoiceCoach: ObservableObject {
 
         Task { @MainActor in
             // Retrieve RAG context for mistake handling
-            let ragGuidance = await RAGService.shared.retrieveContext(
-                for: "child reached for gun, need gentle correction and teaching moment",
-                mode: .training,
-                limit: 2
-            )
+             let ragGuidance = await RAGService.shared.retrieveContext(
+                 for: "child reached for gun, need gentle correction and teaching moment",
+                 mode: .training,
+                 limit: 2
+             )
 
             let context = """
             The child reached for the gun. Tell them firmly but kindly:
@@ -637,8 +735,9 @@ final class VoiceCoach: ObservableObject {
             3. Go back to where you started
             4. When you're ready, tap anywhere on the screen
             Be encouraging but clear this was incorrect.
+            
 
-            \(ragGuidance)
+             \(ragGuidance)
             """
 
             // Stop any current conversation or audio to avoid overlap

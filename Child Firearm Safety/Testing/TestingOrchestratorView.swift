@@ -384,6 +384,11 @@ final class TestingARViewController: UIViewController {
             // Generate collision shapes
             model.generateCollisionShapes(recursive: true)
 
+            // Kitchen model pivot is already at ground level - no offset needed
+            // if assetName == "kitchen" {
+            //     model.position = [0, -0.05, 0]
+            // }
+
             // Create anchor at saved position
             let anchor = AnchorEntity(world: transform)
             anchor.addChild(model)

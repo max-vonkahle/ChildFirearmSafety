@@ -5,16 +5,6 @@
 //  Created by Max on 9/25/25.
 //
 
-
-//
-//  ARCoordinator.swift
-//  Child Firearm Safety
-//
-//  Extracted Coordinator that owns AR session logic, hand detection,
-//  asset placement, and ARWorldMap save/load.
-//  Pair with WorldMapStore.swift
-//
-
 import Foundation
 import SwiftUI
 import RealityKit
@@ -55,6 +45,12 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private let handRequest = VNDetectHumanHandPoseRequest()
     private let handRequestHandler = VNSequenceRequestHandler()
 
+    // Background Vision processing
+    private let visionQueue = DispatchQueue(label: "com.childgunsafety.vision", qos: .userInitiated)
+    private var cachedHandObservations: [VNHumanHandPoseObservation] = []
+    private let observationsLock = NSLock()
+    private var isVisionProcessing = false
+
     // Throttle & reach-once flag
     private var lastDecisionAt: CFTimeInterval = 0
     var warningShown: Bool = false
@@ -78,6 +74,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     // Tuning knobs
     private let pixelPadding: CGFloat = 24        // expands gun rect in screen px
     private let depthMargin: Float = 0.07         // hand must be this much closer than gun (meters)
+    private let maxReachDistance: Float = 0.5     // hand must be within 0.5m of gun depth to count as reaching
     private let decisionInterval: CFTimeInterval = 0.15
     private let runAwayThreshold: Float = 1.5       // Must retreat 1.5m+ to count as "running"
     private let runAwayMaxTime: CFTimeInterval = 2.0 // Must do it within 2 seconds
@@ -258,16 +255,42 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 }
             }
 
-            // Vision hand pose
-            do {
-                try handRequestHandler.perform([handRequest],
-                                               on: frame.capturedImage,
-                                               orientation: currentImageOrientation())
-            } catch {
-                return
+            // Dispatch Vision hand pose to background queue (non-blocking)
+            if !isVisionProcessing {
+                isVisionProcessing = true
+                let capturedImage = frame.capturedImage
+                let orientation = currentImageOrientation()
+                visionQueue.async { [weak self] in
+                    guard let self = self else { return }
+                    let visionStart = CACurrentMediaTime()
+                    do {
+                        try self.handRequestHandler.perform([self.handRequest],
+                                                            on: capturedImage,
+                                                            orientation: orientation)
+                    } catch {
+                        self.isVisionProcessing = false
+                        return
+                    }
+                    let visionMs = Int((CACurrentMediaTime() - visionStart) * 1000)
+                    if visionMs > 16 {
+                        print("⚠️ [Vision-BG] Hand pose: \(visionMs)ms")
+                    }
+
+                    // Cache observations thread-safely
+                    let results = self.handRequest.results ?? []
+                    self.observationsLock.lock()
+                    self.cachedHandObservations = results
+                    self.observationsLock.unlock()
+                    self.isVisionProcessing = false
+                }
             }
 
-            guard let observations = handRequest.results, !observations.isEmpty else { return }
+            // Use cached observations for decision making (fast, main thread)
+            observationsLock.lock()
+            let observations = cachedHandObservations
+            observationsLock.unlock()
+
+            guard !observations.isEmpty else { return }
             guard let gunRect = gunScreenRect() else { return }
 
             // Check hands against gun rect + depth
@@ -279,14 +302,22 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                     guard let rp = pts[key], rp.confidence > 0.35 else { continue }
                     let hp = visionNormToScreen(rp.location)
 
-                    // 1) inside/near the gun’s screen footprint?
+                    // 1) inside/near the gun's screen footprint?
                     guard gunRect.contains(hp) else { continue }
 
-                    // 2) hand closer than gun?
+                    // 2) hand closer than gun AND within reach distance?
                     if let depthBuf = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap,
                        let handZ = sampleDepthAtScreen(depthBuf, screenPoint: hp),
-                       let gunZ = gunDistanceFromCamera(frame: frame),
-                       handZ + depthMargin < gunZ {
+                       let gunZ = gunDistanceFromCamera(frame: frame) {
+                        
+                        // Hand must be:
+                        // 1. Closer than gun (handZ + margin < gunZ)
+                        // 2. Within maxReachDistance of gun (gunZ - handZ < maxReachDistance)
+                        // This prevents false positives when hand is just in front of camera
+                        let isCloserThanGun = handZ + depthMargin < gunZ
+                        let isWithinReachDistance = gunZ - handZ < maxReachDistance
+                        
+                        guard isCloserThanGun && isWithinReachDistance else { continue }
 
                         // Extra safety: prevent duplicate events in same frame (multiple hands)
                         guard currentFrameNumber != lastReachGestureFrame else {
@@ -334,6 +365,16 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
+        // Check world mapping status before allowing placement
+        if let frame = arView.session.currentFrame {
+            let status = frame.worldMappingStatus
+            if status == .notAvailable || status == .limited {
+                print("⚠️ [AR] Cannot place object - insufficient mapping (status: \(statusDescription(status)))")
+                showPlacementWarning(status: status)
+                return
+            }
+        }
+
         let location = sender.location(in: arView)
 
         // Try to hit test against entities first (like table tops)
@@ -365,7 +406,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
 
         // Place new asset
-        let asset = selectedAsset ?? "gun"
+        let asset = selectedAsset ?? "table"
         if let root = modelRoots[asset]?.clone(recursive: true) {
             layFlat(root, objectType: asset)
             root.position = [0, 0.01, 0]
@@ -384,6 +425,11 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             let arAnchor = ARAnchor(name: "placedAsset_\(asset)", transform: transform)
             arView.session.add(anchor: arAnchor)
             placedARAnchors.append(arAnchor)
+
+            // If table was placed, automatically place gun on top of it
+            if asset == "table" {
+                placeGunOnTable(tableTransform: transform)
+            }
 
             warningShown = false
             isArmed = false
@@ -466,6 +512,37 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
 
+    private func showPlacementWarning(status: ARFrame.WorldMappingStatus) {
+        let message: String
+        if status == .notAvailable {
+            message = "Cannot place objects yet.\n\nPlease move your device slowly around the area to scan surfaces and create spatial anchors."
+        } else {
+            message = "Insufficient scanning detected.\n\nMove your device around to scan more of the floor and surrounding area before placing objects.\n\nMapping status: \(statusDescription(status))"
+        }
+
+        DispatchQueue.main.async {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let rootViewController = windowScene.windows.first?.rootViewController else {
+                return
+            }
+
+            let alert = UIAlertController(
+                title: "Scan More Area",
+                message: message,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+
+            // Find the topmost presented view controller
+            var topController = rootViewController
+            while let presented = topController.presentedViewController {
+                topController = presented
+            }
+
+            topController.present(alert, animated: true)
+        }
+    }
+
     func loadWorldMap(roomId: String) {
         guard let arView = arView else { return }
 
@@ -504,11 +581,18 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
         guard let arView = arView else { return }
         var restoredAnyAsset = false
+        var tableTransformToPlaceGun: simd_float4x4? = nil
 
         for a in anchors where a.name?.hasPrefix("placedAsset_") == true {
             // Parse asset type
             let components = a.name?.split(separator: "_") ?? []
             let asset = components.count > 1 ? String(components[1]) : "gun"
+
+            // Skip gun anchors during restoration - gun will be auto-placed on table
+            if asset == "gun" {
+                print("⏭️ [AR] Skipping gun anchor restoration - will auto-place on table")
+                continue
+            }
 
             // Add to our tracked AR anchors
             placedARAnchors.append(a)
@@ -521,6 +605,8 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 // Enable collision for tables so other objects can be placed on them
                 if asset == "table" {
                     model.generateCollisionShapes(recursive: true)
+                    // Save table transform to place gun on it after restoration
+                    tableTransformToPlaceGun = a.transform
                 }
 
                 let entityAnchor = AnchorEntity(world: a.transform)
@@ -528,25 +614,21 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 arView.scene.addAnchor(entityAnchor)
                 placedAnchors.append(entityAnchor)
 
-                // Handle gun restoration specially during reset mode
-                if asset == "gun" && !savedGunAnchors.isEmpty {
-                    print("⚠️ [AR] Gun anchor restored during relocalization, but gun should stay hidden (in reset mode)")
-                    // Remove the anchor we just added - gun should stay hidden
-                    arView.scene.removeAnchor(entityAnchor)
-                    if let last = placedAnchors.last {
-                        placedAnchors.removeLast()
-                    }
-                } else {
-                    print("Restored \(asset) at saved position")
-                    restoredAnyAsset = true
+                print("Restored \(asset) at saved position")
+                restoredAnyAsset = true
 
-                    // Only reset warningShown if gun is not currently hidden
-                    // Don't reset during reset mode (when savedGunAnchors has items)
-                    if savedGunAnchors.isEmpty {
-                        warningShown = false
-                    }
+                // Only reset warningShown if gun is not currently hidden
+                // Don't reset during reset mode (when savedGunAnchors has items)
+                if savedGunAnchors.isEmpty {
+                    warningShown = false
                 }
             }
+        }
+
+        // Auto-place gun on table if table was restored
+        if let tableTransform = tableTransformToPlaceGun {
+            print("✅ [AR] Table restored, auto-placing gun on it")
+            placeGunOnTable(tableTransform: tableTransform)
         }
 
         // Only notify after ALL anchors in this batch are restored
@@ -807,5 +889,63 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         placedARAnchors.removeAll()
 
         currentAsset = nil
+    }
+
+    // MARK: - Auto-place gun on table
+
+    private func placeGunOnTable(tableTransform: simd_float4x4) {
+        guard let arView = arView,
+              let gunModel = modelRoots["gun"]?.clone(recursive: true) else {
+            print("⚠️ [AR] Cannot place gun: gun model not loaded")
+            return
+        }
+
+        // Define gun offset relative to table center (X, Y, Z in meters)
+        // Y: height above table, Z: forward/back, X: left/right
+        let relativeOffset = SIMD3<Float>(0.0, 0.785, 0.40)  // Higher, toward back edge
+
+        // Calculate gun transform based on table transform
+        let tablePosition = SIMD3<Float>(
+            tableTransform.columns.3.x,
+            tableTransform.columns.3.y,
+            tableTransform.columns.3.z
+        )
+
+        // Extract table's rotation matrix
+        let rotationMatrix = simd_float3x3(
+            SIMD3<Float>(tableTransform.columns.0.x, tableTransform.columns.0.y, tableTransform.columns.0.z),
+            SIMD3<Float>(tableTransform.columns.1.x, tableTransform.columns.1.y, tableTransform.columns.1.z),
+            SIMD3<Float>(tableTransform.columns.2.x, tableTransform.columns.2.y, tableTransform.columns.2.z)
+        )
+
+        // Rotate the offset by the table's orientation
+        let rotatedOffset = rotationMatrix * relativeOffset
+        let gunPosition = tablePosition + rotatedOffset
+
+        // Create gun transform with same rotation as table
+        var gunTransform = tableTransform
+        gunTransform.columns.3 = SIMD4<Float>(gunPosition.x, gunPosition.y, gunPosition.z, 1.0)
+
+        // Apply the gun's standard orientation
+        layFlat(gunModel, objectType: "gun")
+
+        // Rotate gun 180 degrees around Y axis (vertical) to face away from user
+        let rotateAway = simd_quatf(angle: .pi, axis: SIMD3<Float>(0, 1, 0))
+        gunModel.orientation = rotateAway * gunModel.orientation
+
+        gunModel.position = [0, 0.01, 0]
+
+        // Create anchor and add to scene
+        let gunAnchor = AnchorEntity(world: gunTransform)
+        gunAnchor.addChild(gunModel)
+        arView.scene.addAnchor(gunAnchor)
+        placedAnchors.append(gunAnchor)
+
+        // Create AR anchor for world map serialization
+        let gunARAnch = ARAnchor(name: "placedAsset_gun", transform: gunTransform)
+        arView.session.add(anchor: gunARAnch)
+        placedARAnchors.append(gunARAnch)
+
+        print("✅ [AR] Gun automatically placed on table at offset \(relativeOffset)")
     }
 }

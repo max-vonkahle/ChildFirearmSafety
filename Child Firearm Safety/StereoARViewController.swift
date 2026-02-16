@@ -9,6 +9,7 @@ import UIKit
 import ARKit
 import SceneKit
 import MetalKit
+import Vision
 
 final class StereoARViewController: UIViewController, ARSessionDelegate {
     // AR session
@@ -23,7 +24,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Model templates and placed nodes (for loading saved rooms)
     private var modelTemplates: [String: SCNNode] = [:]  // asset name -> template node
     private var placedNodes: [SCNNode] = []  // All placed asset nodes
-    private var gunNode: SCNNode?  // Track gun node for hide/show
+    private var gunNodes: [SCNNode] = []  // Track ALL gun nodes for hide/show (can be multiple)
+    private var gunNode: SCNNode? { gunNodes.first }  // Legacy compatibility - return first gun
     private var hasNotifiedAssetsConfigured = false  // Ensure notification fires only once
 
     // Testing mode support
@@ -50,6 +52,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var maskView: UIView!
     private var reticleView: UIView!
 
+    // Tap gesture for reset
+    private var tapGesture: UITapGestureRecognizer!
+    private var isWaitingForResetSpeech: Bool = false
+
     // Occlusion overlay views (renders camera where person is detected, on top of 3D)
     private var leftOcclusionView: MTKView!
     private var rightOcclusionView: MTKView!
@@ -60,6 +66,40 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var currentPixelBuffer: CVPixelBuffer?
     private let frameLock = NSLock()
     private var frameCounter: Int = 0
+
+    // Gesture detection (hand pose)
+    private let handRequest = VNDetectHumanHandPoseRequest()
+    private let handRequestHandler = VNSequenceRequestHandler()
+    private let visionQueue = DispatchQueue(label: "com.childgunsafety.stereo.vision", qos: .userInitiated)
+    private var cachedHandObservations: [VNHumanHandPoseObservation] = []
+    private let observationsLock = NSLock()
+    private var isVisionProcessing = false
+    private var lastDecisionAt: CFTimeInterval = 0
+    private let decisionInterval: CFTimeInterval = 0.15
+    private var isProcessingGesture = false
+
+    // Reach-once flag and frame deduplication
+    var warningShown: Bool = false
+    private var lastReachGestureFrame: Int = 0
+    private var currentFrameNumber: Int = 0
+
+    // Proximity tracking
+    private var wasNear: Bool = false
+    private var lastNearDistance: Float = 0
+    private var lastNearTime: CFTimeInterval = 0
+    private var isRetreating: Bool = false
+    private var retreatStartDistance: Float = 0
+    private var retreatStartTime: CFTimeInterval = 0
+
+    // Tuning knobs (matching ARCoordinator)
+    private let pixelPadding: CGFloat = 24
+    private let depthMargin: Float = 0.07
+    private let maxReachDistance: Float = 0.2  // Hand must be within 0.5m of gun depth to count as reaching
+    private let retreatStartThreshold: Float = 0.15
+    private let runAwayThreshold: Float = 1.5
+    private let runAwayMaxTime: CFTimeInterval = 2.0
+    private let backAwayThreshold: Float = 0.7
+    private let backAwayMaxTime: CFTimeInterval = 3.0
 
     // Adjustable parameters for I/O 2015 Cardboard (matching ARFun)
     private let eyeFOV: CGFloat = 60.0
@@ -221,6 +261,21 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         baseCameraNode.addChildNode(rightEye)
         scene.rootNode.addChildNode(baseCameraNode)
 
+        // Create detection camera with un-shifted projection for gesture detection
+        // This matches Vision's coordinate system (full camera image, no stereo crop)
+        detectionCamera = SCNNode()
+        detectionCamera?.camera = SCNCamera()
+        detectionCamera?.camera?.wantsHDR = false
+        detectionCamera?.camera?.wantsExposureAdaptation = false
+        detectionCamera?.camera?.projectionTransform = createShiftedProjectionMatrix(
+            horizontalShift: 0,  // No shift - matches Vision's full camera view
+            aspect: screenAspect,
+            fovY: Float(eyeFOV),
+            near: zNear,
+            far: zFar
+        )
+        scene.rootNode.addChildNode(detectionCamera!)
+
         // Add lighting to the scene
         setupSceneLighting()
 
@@ -242,6 +297,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         // Initial reticle drawing
         createReticle()
+
+        // --- Tap gesture for reset ---
+        tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        view.addGestureRecognizer(tapGesture)
 
         // --- ARKit session setup ---
         session.delegate = self
@@ -319,8 +378,18 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Keep camera aligned to ARKit head pose + store pixel buffer for GPU rendering
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         baseCameraNode.simdTransform = frame.camera.transform
+        
+        // Update detection camera to match base camera position
+        // (but with un-shifted projection for Vision coordinate matching)
+        detectionCamera?.simdTransform = frame.camera.transform
 
+        // TIMING INSTRUMENTATION - measure lock contention
+        let lockStart = CACurrentMediaTime()
         frameLock.lock()
+        let lockWaitMs = Int((CACurrentMediaTime() - lockStart) * 1000)
+        if lockWaitMs > 1 {
+            print("⚠️ [Stereo-ARKit] Lock wait: \(lockWaitMs)ms")
+        }
         currentPixelBuffer = frame.capturedImage
         currentSegmentationBuffer = frame.segmentationBuffer
         frameLock.unlock()
@@ -339,6 +408,14 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             default:
                 break
             }
+        }
+
+        // Gesture detection (only when gun is visible)
+        if gunNode != nil && !warningShown {
+            processGestureDetection(frame: frame)
+        } else if currentFrameNumber % 60 == 0 {
+            // Debug: log why gesture detection is not running
+            // print("🔍 [Stereo-Gesture] Not processing: gunNode=\(gunNode != nil), warningShown=\(warningShown)")
         }
     }
 
@@ -369,7 +446,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
                 // Store gun node reference for hide/show
                 if assetName.contains("gun") {
-                    gunNode = containerNode
+                    gunNodes.append(containerNode)
+                    // print("🔫 [Stereo-Gesture] Gun node #\(gunNodes.count) set from restored anchor! Position: \(anchor.transform.columns.3)")
+                    // print("🔫 [Stereo-Gesture] Gun node has \(containerNode.childNodes.count) children")
+                    // print("🔫 [Stereo-Gesture] Total gun nodes: \(gunNodes.count)")
                 }
 
                 // print("\(assetName) model restored at saved position in stereo mode")
@@ -496,6 +576,25 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             hideGun()
         } else if command == "setGunVisibility:true" {
             showGun()
+        } else if command == "disableTapDuringSpeech" {
+            isWaitingForResetSpeech = true
+        } else if command == "enableTapAfterSpeech" {
+            isWaitingForResetSpeech = false
+        }
+    }
+
+    @objc private func handleTap(_ sender: UITapGestureRecognizer) {
+        // If gun is hidden (warningShown), user is tapping to confirm reset
+        if warningShown {
+            // Check if we're still waiting for reset instruction speech to complete
+            if isWaitingForResetSpeech {
+                print("⏭️ [Stereo] Tap ignored - waiting for model to finish speaking")
+                return
+            }
+
+            print("✅ [Stereo] User tapped to confirm reset - posting userTappedToReset event")
+            NotificationCenter.default.post(name: arEventNotification, object: nil,
+                userInfo: [BusKey.arevent: AREvent.userTappedToReset])
         }
     }
 
@@ -572,11 +671,59 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     }
 
     private func hideGun() {
-        gunNode?.isHidden = true
+        // print("🔫 [Stereo-Gesture] hideGun() called - tracking \(gunNodes.count) gun nodes")
+
+        guard !gunNodes.isEmpty else {
+            // print("❌ [Stereo-Gesture] Cannot hide gun - no gun nodes tracked!")
+            return
+        }
+
+        // Hide all gun nodes
+        for (index, gunNode) in gunNodes.enumerated() {
+            // print("🔫 [Stereo-Gesture] Hiding gun node #\(index + 1) (parent: \(gunNode.parent != nil))")
+            gunNode.isHidden = true
+
+            // Also hide all children recursively
+            func hideRecursive(_ node: SCNNode) {
+                node.isHidden = true
+                for child in node.childNodes {
+                    hideRecursive(child)
+                }
+            }
+            hideRecursive(gunNode)
+            // print("🔫 [Stereo-Gesture] Gun node #\(index + 1) hidden. isHidden=\(gunNode.isHidden), opacity=\(gunNode.opacity)")
+        }
+
+        // print("🔫 [Stereo-Gesture] ✅ Finished hiding all \(gunNodes.count) gun nodes")
     }
 
     private func showGun() {
-        gunNode?.isHidden = false
+        // print("🔫 [Stereo-Gesture] showGun() called - tracking \(gunNodes.count) gun nodes")
+
+        guard !gunNodes.isEmpty else {
+            // print("❌ [Stereo-Gesture] Cannot show gun - no gun nodes tracked!")
+            return
+        }
+
+        // Show all gun nodes
+        for (index, gunNode) in gunNodes.enumerated() {
+            // print("🔫 [Stereo-Gesture] Showing gun node #\(index + 1)")
+            gunNode.isHidden = false
+
+            // Also show all children recursively
+            func showRecursive(_ node: SCNNode) {
+                node.isHidden = false
+                for child in node.childNodes {
+                    showRecursive(child)
+                }
+            }
+            showRecursive(gunNode)
+        }
+
+        // print("🔫 [Stereo-Gesture] ✅ Finished showing all \(gunNodes.count) gun nodes")
+
+        warningShown = false
+        lastReachGestureFrame = 0  // Allow detection on next encounter
     }
 
     // MARK: - Testing Mode
@@ -674,11 +821,22 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 modelNode.transform = SCNMatrix4Mult(rotZ, SCNMatrix4Mult(rotX, modelNode.transform))
             }
 
+            // Position kitchen to sit flush on the ground
+            if name == "kitchen" {
+                modelNode.position = SCNVector3(0, -0.05, 0)
+            }
+
             // Wrap in a container positioned at the saved world-space transform
             let containerNode = SCNNode()
             containerNode.simdTransform = transform
             containerNode.addChildNode(modelNode)
             scene.rootNode.addChildNode(containerNode)
+
+            // Store gun node reference for gesture detection
+            if isGun {
+                gunNodes.append(containerNode)
+                // print("🔫 [Stereo-Gesture] Gun node #\(gunNodes.count) set! Position: \(transform.columns.3)")
+            }
 
             let pos = transform.columns.3
             // print("✅ Placed \(name) at (\(pos.x), \(pos.y), \(pos.z))")
@@ -823,6 +981,15 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // Apply to cameras
         leftEye.camera?.projectionTransform = leftProjection
         rightEye.camera?.projectionTransform = rightProjection
+        
+        // Update detection camera with un-shifted projection (for Vision coordinate matching)
+        detectionCamera?.camera?.projectionTransform = createShiftedProjectionMatrix(
+            horizontalShift: 0,  // No shift - matches Vision's full camera view
+            aspect: screenAspect,
+            fovY: Float(eyeFOV),
+            near: zNear,
+            far: zFar
+        )
 
         // Debug: Print the projection parameters
         // print("[StereoDebug] effectiveOffset: \(effectiveOffset), screenAspect: \(screenAspect)")
@@ -981,6 +1148,466 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Debug multiplier for stereo effect (1.0 = normal)
     private var stereoMultiplier: Float = 1.0
 
+    // Detection camera with un-shifted projection for gesture detection
+    // This matches Vision's coordinate system (full camera image, no stereo crop)
+    private var detectionCamera: SCNNode?
+
+    // Helper to determine which notification to post based on mode
+    private var arEventNotification: Notification.Name {
+        testingRoomId != nil ? .arTestingEvent : .arTrainingEvent
+    }
+
+    // MARK: - Gesture Detection
+
+    private func processGestureDetection(frame: ARFrame) {
+        // Prevent overlapping processing
+        if isProcessingGesture { return }
+        isProcessingGesture = true
+        defer { isProcessingGesture = false }
+
+        currentFrameNumber += 1
+
+        // Debug: log that we're processing
+        if currentFrameNumber % 60 == 0 {
+            print("✅ [Stereo-Gesture] Processing frame \(currentFrameNumber)")
+        }
+
+        // Throttle decision making
+        let t = CACurrentMediaTime()
+        if t - lastDecisionAt < decisionInterval { return }
+        lastDecisionAt = t
+
+        autoreleasepool {
+            // Proximity & retreat detection
+            if let d = gunDistanceFromCamera(frame: frame) {
+                let tNow = t
+
+                // Enter near zone
+                if d < 1.0, wasNear == false {
+                    wasNear = true
+                    lastNearDistance = d
+                    lastNearTime = tNow
+                    isRetreating = false
+                    // print("📍 [Stereo-Gesture] User entered near zone (d=\(d)m) - posting gunProximityNear to \(arEventNotification)")
+                    NotificationCenter.default.post(name: arEventNotification, object: nil,
+                        userInfo: [BusKey.arevent: AREvent.gunProximityNear(distance: d)])
+                }
+
+                if wasNear {
+                    let distanceFromNearest = d - lastNearDistance
+
+                    if !isRetreating && distanceFromNearest > retreatStartThreshold {
+                        isRetreating = true
+                        retreatStartDistance = d
+                        retreatStartTime = tNow
+                    }
+
+                    if isRetreating {
+                        let retreatElapsed = tNow - retreatStartTime
+                        let retreatDistance = d - retreatStartDistance
+
+                        // Check for running away
+                        if retreatDistance > runAwayThreshold, retreatElapsed < runAwayMaxTime {
+                            wasNear = false
+                            isRetreating = false
+                            NotificationCenter.default.post(name: arEventNotification, object: nil,
+                                userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)])
+                        }
+                        // Fall back to backing away
+                        else if retreatDistance > backAwayThreshold, retreatElapsed < backAwayMaxTime {
+                            wasNear = false
+                            isRetreating = false
+                            NotificationCenter.default.post(name: arEventNotification, object: nil,
+                                userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)])
+                        }
+                    }
+
+                    lastNearDistance = min(lastNearDistance, d)
+                }
+            }
+
+            // Hand pose detection (background processing)
+            if !isVisionProcessing {
+                isVisionProcessing = true
+                let capturedImage = frame.capturedImage
+                let orientation = currentImageOrientation()
+                visionQueue.async { [weak self] in
+                    guard let self = self else { return }
+                    do {
+                        try self.handRequestHandler.perform([self.handRequest],
+                                                            on: capturedImage,
+                                                            orientation: orientation)
+                    } catch {
+                        self.isVisionProcessing = false
+                        return
+                    }
+
+                    let results = self.handRequest.results ?? []
+                    self.observationsLock.lock()
+                    self.cachedHandObservations = results
+                    self.observationsLock.unlock()
+                    self.isVisionProcessing = false
+                }
+            }
+
+            // Use cached observations for decision making
+            observationsLock.lock()
+            let observations = cachedHandObservations
+            observationsLock.unlock()
+
+            if currentFrameNumber % 60 == 0 {
+                print("👋 [Stereo-Gesture] Found \(observations.count) hands")
+            }
+
+            guard !observations.isEmpty else { return }
+
+            guard let gunRect = gunScreenRect() else {
+                if currentFrameNumber % 60 == 0 {
+                    print("⚠️ [Stereo-Gesture] Could not get gun screen rect")
+                }
+                return
+            }
+
+            if currentFrameNumber % 60 == 0 {
+                print("🎯 [Stereo-Gesture] Gun rect: \(gunRect)")
+            }
+
+            // Check hands against gun rect + depth
+            var handCheckCount = 0
+            for hand in observations {
+                let pts = (try? hand.recognizedPoints(.all)) ?? [:]
+                for key in [VNHumanHandPoseObservation.JointName.indexTip,
+                            .middleTip, .wrist] {
+                    guard let rp = pts[key], rp.confidence > 0.35 else { continue }
+
+                    // Convert Vision coordinates to screen coordinates (accounting for stereo crop)
+                    guard let hp = visionNormToScreen(rp.location) else {
+                        // Hand is outside left eye's visible range - skip it
+                        continue
+                    }
+                    handCheckCount += 1
+
+                    // NEW DEBUG: Print Vision raw -> Screen mapping
+                    if currentFrameNumber % 30 == 0 && handCheckCount <= 2 {
+                        print("🖐️ [Debug] Vision raw: \(rp.location) → Screen: \(hp)")
+                        print("   Gun rect: \(gunRect)")
+                        print("   Contains: \(gunRect.contains(hp))")
+                    }
+
+                    // Inside/near gun's screen footprint?
+                    if !gunRect.contains(hp) {
+                        if currentFrameNumber % 120 == 0 && handCheckCount == 1 {
+                            print("📍 [Stereo-Gesture] Hand at \(hp) outside gun rect \(gunRect)")
+                        }
+                        continue
+                    }
+
+                    print("✋ [Stereo-Gesture] Hand INSIDE gun rect! Point: \(hp)")
+
+                    // NEW DEBUG: Detailed coordinates when hand is inside gun rect
+                    print("⚠️ [Debug] HAND INSIDE GUN RECT!")
+                    print("   Vision coords: \(rp.location)")
+                    print("   Screen coords: \(hp)")
+                    print("   Gun rect: \(gunRect)")
+
+                    // Hand closer than gun?
+                    if let depthBuf = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap,
+                       let handZ = sampleDepthAtScreen(depthBuf, screenPoint: hp),
+                       let gunZ = gunDistanceFromCamera(frame: frame) {
+
+                        print("📏 [Stereo-Gesture] Depth check: handZ=\(handZ), gunZ=\(gunZ), margin=\(depthMargin), maxReach=\(maxReachDistance)")
+
+                        // Hand must be:
+                        // 1. Closer than gun (handZ + margin < gunZ)
+                        // 2. Within maxReachDistance of gun (gunZ - handZ < maxReachDistance)
+                        // This prevents false positives when hand is just in front of camera
+                        let isCloserThanGun = handZ + depthMargin < gunZ
+                        let isWithinReachDistance = gunZ - handZ < maxReachDistance
+                        
+                        if isCloserThanGun && isWithinReachDistance {
+                            // Prevent duplicate events in same frame
+                            guard currentFrameNumber != lastReachGestureFrame else {
+                                print("⏭️ [Stereo-Gesture] Already posted in frame \(currentFrameNumber)")
+                                continue
+                            }
+                            lastReachGestureFrame = currentFrameNumber
+
+                            print("🚨 [Stereo-Gesture] REACH GESTURE DETECTED! Hiding gun...")
+                            warningShown = true
+                            hideGun()
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            NotificationCenter.default.post(name: arEventNotification, object: nil,
+                                userInfo: [BusKey.arevent: AREvent.reachGesture])
+                            return
+                        } else {
+                            // print("❌ [Stereo-Gesture] Hand not closer than gun (handZ + margin >= gunZ)")
+                        }
+                    } else {
+                        // print("⚠️ [Stereo-Gesture] Could not get depth data: depthBuf=\(frame.smoothedSceneDepth?.depthMap != nil || frame.sceneDepth?.depthMap != nil)")
+                    }
+                }
+            }
+        }
+    }
+
+    private func gunScreenRect() -> CGRect? {
+        guard let gunNode = gunNode else {
+            print("⚠️ [Stereo-Gesture] gunScreenRect: gunNode is nil")
+            return nil
+        }
+
+        // Get the gun model (first child of container)
+        guard let model = gunNode.childNodes.first else {
+            print("⚠️ [Stereo-Gesture] gunScreenRect: gunNode has no children")
+            return nil
+        }
+
+        // Use detection camera with un-shifted projection for Vision coordinate matching
+        guard let detectionCam = detectionCamera else {
+            print("⚠️ [Stereo-Gesture] Detection camera not available")
+            return nil
+        }
+        
+        guard detectionCam.camera != nil else {
+            print("⚠️ [Stereo-Gesture] Detection camera has no SCNCamera")
+            return nil
+        }
+
+        // Get the world bounding box directly
+        // This accounts for all transforms (scale, rotation, translation)
+        let worldBBox = model.boundingBox  // Local bounding box
+        
+        // Get the model's world transform to convert local corners to world space
+        let modelWorldTransform = model.worldTransform
+        
+        // Create 8 corners of bounding box in local space
+        let localCorners: [SCNVector3] = [
+            SCNVector3(worldBBox.min.x, worldBBox.min.y, worldBBox.min.z),
+            SCNVector3(worldBBox.max.x, worldBBox.min.y, worldBBox.min.z),
+            SCNVector3(worldBBox.min.x, worldBBox.max.y, worldBBox.min.z),
+            SCNVector3(worldBBox.max.x, worldBBox.max.y, worldBBox.min.z),
+            SCNVector3(worldBBox.min.x, worldBBox.min.y, worldBBox.max.z),
+            SCNVector3(worldBBox.max.x, worldBBox.min.y, worldBBox.max.z),
+            SCNVector3(worldBBox.min.x, worldBBox.max.y, worldBBox.max.z),
+            SCNVector3(worldBBox.max.x, worldBBox.max.y, worldBBox.max.z),
+        ]
+        
+        // Convert local corners to world space using model's world transform
+        let worldCorners = localCorners.map { localCorner -> SCNVector3 in
+            // Apply model's world transform to local corner
+            let local = SIMD4<Float>(localCorner.x, localCorner.y, localCorner.z, 1.0)
+            // Convert SCNMatrix4 to simd_float4x4
+            let worldTransform = simd_float4x4(
+                SIMD4<Float>(modelWorldTransform.m11, modelWorldTransform.m12, modelWorldTransform.m13, modelWorldTransform.m14),
+                SIMD4<Float>(modelWorldTransform.m21, modelWorldTransform.m22, modelWorldTransform.m23, modelWorldTransform.m24),
+                SIMD4<Float>(modelWorldTransform.m31, modelWorldTransform.m32, modelWorldTransform.m33, modelWorldTransform.m34),
+                SIMD4<Float>(modelWorldTransform.m41, modelWorldTransform.m42, modelWorldTransform.m43, modelWorldTransform.m44)
+            )
+            let world = worldTransform * local
+            return SCNVector3(world.x, world.y, world.z)
+        }
+
+        // Debug: log first corner's world position periodically
+        if currentFrameNumber % 60 == 0 && worldCorners.count > 0 {
+            print("🔧 [Debug] Model world transform: \(modelWorldTransform)")
+            print("🔧 [Debug] First corner world pos: \(worldCorners[0])")
+        }
+
+        // Create a temporary SCNView for projection with detection camera
+        // We use leftSCNView's dimensions but project with detection camera
+        let viewWidth = leftSCNView.bounds.width
+        let viewHeight = leftSCNView.bounds.height
+
+        // Project corners using detection camera (un-shifted projection)
+        var projectedCount = 0
+        let pts = worldCorners.compactMap { worldCorner -> CGPoint? in
+            // Project using detection camera's un-shifted projection
+            let projectedPoint = projectPointWithCamera(
+                worldPos: worldCorner,
+                camera: detectionCam,
+                viewWidth: viewWidth,
+                viewHeight: viewHeight
+            )
+            
+            if projectedPoint != nil {
+                projectedCount += 1
+            }
+            
+            return projectedPoint
+        }
+        
+        if currentFrameNumber % 60 == 0 {
+            print("🔧 [Debug] Projected \(projectedCount)/8 corners, got \(pts.count) valid points")
+        }
+        
+        guard pts.count >= 2 else {
+            if currentFrameNumber % 60 == 0 {
+                print("⚠️ [Stereo-Gesture] Not enough projected points: \(pts.count)")
+            }
+            return nil
+        }
+
+        var minX = CGFloat.greatestFiniteMagnitude, minY = minX
+        var maxX: CGFloat = 0, maxY: CGFloat = 0
+        for p in pts {
+            minX = Swift.min(minX, p.x); maxX = Swift.max(maxX, p.x)
+            minY = Swift.min(minY, p.y); maxY = Swift.max(maxY, p.y)
+        }
+        var rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        rect = rect.insetBy(dx: -pixelPadding, dy: -pixelPadding)
+
+        // Debug: log gun rect size to verify it's reasonable
+        if currentFrameNumber % 60 == 0 {
+            print("🔧 [Debug] Gun rect (un-shifted projection): \(rect), viewSize: (\(viewWidth), \(viewHeight))")
+        }
+
+        return rect
+    }
+    
+    /// Project a world point to screen coordinates using a specific camera's projection
+    private func projectPointWithCamera(worldPos: SCNVector3, camera: SCNNode, viewWidth: CGFloat, viewHeight: CGFloat) -> CGPoint? {
+        // Get the camera's view-projection matrix
+        guard let cameraNode = camera.camera else { 
+            print("⚠️ [Debug] projectPointWithCamera: no camera")
+            return nil 
+        }
+        
+        // Transform world position to camera space
+        let worldPosSIMD = SIMD3<Float>(worldPos.x, worldPos.y, worldPos.z)
+        let cameraTransform = camera.simdTransform
+        let viewMatrix = cameraTransform.inverse
+        
+        // Transform to view space
+        let viewPos = viewMatrix * SIMD4<Float>(worldPosSIMD, 1.0)
+        
+        // Check if point is behind camera
+        guard viewPos.z < 0 else { 
+            // Point is in front of camera (not visible)
+            return nil 
+        }
+        
+        // Get projection matrix and convert to simd_float4x4
+        let scnProjMatrix = cameraNode.projectionTransform
+        let projMatrix = simd_float4x4(
+            SIMD4<Float>(scnProjMatrix.m11, scnProjMatrix.m12, scnProjMatrix.m13, scnProjMatrix.m14),
+            SIMD4<Float>(scnProjMatrix.m21, scnProjMatrix.m22, scnProjMatrix.m23, scnProjMatrix.m24),
+            SIMD4<Float>(scnProjMatrix.m31, scnProjMatrix.m32, scnProjMatrix.m33, scnProjMatrix.m34),
+            SIMD4<Float>(scnProjMatrix.m41, scnProjMatrix.m42, scnProjMatrix.m43, scnProjMatrix.m44)
+        )
+        
+        // Project to clip space
+        let clipPos = projMatrix * viewPos
+        
+        // Perspective divide to get NDC
+        guard clipPos.w != 0 else { 
+            print("⚠️ [Debug] projectPointWithCamera: clipPos.w is 0")
+            return nil 
+        }
+        let ndcX = clipPos.x / clipPos.w
+        let ndcY = clipPos.y / clipPos.w
+        
+        // Convert NDC to screen coordinates
+        // NDC range is [-1, 1], screen range is [0, width] and [0, height]
+        // Note: Vision coordinates have origin at bottom-left, so we flip Y
+        let screenX = CGFloat((ndcX + 1.0) / 2.0) * viewWidth
+        let screenY = CGFloat((1.0 - ndcY) / 2.0) * viewHeight  // Flip Y for Vision coordinate system
+        
+        // Debug: Log projection details periodically
+        if currentFrameNumber % 60 == 0 {
+            print("🔧 [Debug] worldPos=\(worldPos) → viewPos=\(viewPos) → ndc=(\(ndcX), \(ndcY)) → screen=(\(screenX), \(screenY))")
+        }
+        
+        // Filter out points that are too far off-screen
+        let margin: CGFloat = 50
+        guard screenX > -margin && screenX < viewWidth + margin &&
+              screenY > -margin && screenY < viewHeight + margin else {
+            // Point is off-screen
+            return nil
+        }
+        
+        return CGPoint(x: screenX, y: screenY)
+    }
+
+    private func gunDistanceFromCamera(frame: ARFrame) -> Float? {
+        guard let gunNode = gunNode,
+              let model = gunNode.childNodes.first else {
+            // print("⚠️ [Stereo-Gesture] gunDistanceFromCamera: gunNode or model is nil")
+            return nil
+        }
+
+        let worldPos = model.position
+        let gunWorldTransform = gunNode.simdTransform
+        let gunWorld = gunWorldTransform * SIMD4<Float>(worldPos.x, worldPos.y, worldPos.z, 1)
+
+        let cam = frame.camera.transform
+        let rel = cam.inverse * SIMD4<Float>(gunWorld.x, gunWorld.y, gunWorld.z, 1)
+        let distance = abs(rel.z)
+
+        if currentFrameNumber % 120 == 0 {
+            print("📏 [Stereo-Gesture] Gun distance from camera: \(distance)m")
+        }
+
+        return distance
+    }
+
+    private func visionNormToScreen(_ loc: CGPoint) -> CGPoint? {
+        // Vision coordinates are normalized [0,1] with origin at bottom-left
+        // Since we now use un-shifted projection for gun rect calculation,
+        // we use direct mapping (no stereo crop compensation)
+        let width = view.bounds.width / 2
+        let height = view.bounds.height
+
+        // Direct mapping: Vision [0,1] -> Screen [0, width/2]
+        // This matches the un-shifted projection used for gun rect calculation
+        let x = loc.x * width
+        let y = (1.0 - loc.y) * height  // Flip Y since Vision has origin at bottom-left
+        
+        return CGPoint(x: x, y: y)
+    }
+
+    private func sampleDepthAtScreen(_ depthBuf: CVPixelBuffer, screenPoint: CGPoint) -> Float? {
+        // Since we now use un-shifted projection for gun rect calculation,
+        // screen coordinates are directly mapped from Vision coordinates
+        let width = view.bounds.width / 2
+        let height = view.bounds.height
+
+        // Direct mapping: Screen -> Vision normalized coordinates
+        // This matches the un-shifted projection used for gun rect calculation
+        let normX = screenPoint.x / width
+        let normY = 1.0 - (screenPoint.y / height)  // Vision has origin at bottom-left
+
+        // Sample depth buffer using normalized coordinates
+        let dmW = CVPixelBufferGetWidth(depthBuf)
+        let dmH = CVPixelBufferGetHeight(depthBuf)
+        let u = Int(round(CGFloat(dmW) * normX))
+        let v = Int(round(CGFloat(dmH) * normY))
+
+        let depth = sampleDepth(buffer: depthBuf, u: u, v: v)
+
+        // ALWAYS log depth sampling to debug false positives
+        print("🔍 [Stereo-Depth] screenPt=\(screenPoint) -> norm=(\(String(format: "%.3f", normX)), \(String(format: "%.3f", normY))) -> depth px=(\(u), \(v))/(\(dmW), \(dmH)) -> depth=\(depth != nil ? String(format: "%.2f", depth!) : "nil")m")
+
+        return depth
+    }
+
+    private func sampleDepth(buffer: CVPixelBuffer, u: Int, v: Int) -> Float? {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let w = CVPixelBufferGetWidth(buffer)
+        let h = CVPixelBufferGetHeight(buffer)
+        guard u >= 0, u < w, v >= 0, v < h else { return nil }
+
+        let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: Float32.self)
+        let rowStride = CVPixelBufferGetBytesPerRow(buffer) / MemoryLayout<Float32>.size
+        let depth = base[v * rowStride + u]
+        return depth.isFinite && depth > 0 ? depth : nil
+    }
+
+    private func currentImageOrientation() -> CGImagePropertyOrientation {
+        // Stereo mode is always landscapeRight (forced by supportedInterfaceOrientations)
+        return .down
+    }
+
     // MARK: - Metal Setup
 
     private func setupMetal() {
@@ -1108,13 +1735,18 @@ extension StereoARViewController: MTKViewDelegate {
     }
 
     private func drawPassthrough(in view: MTKView) {
-        // Get the current pixel buffer
+        // Get the current pixel buffer - TIMING INSTRUMENTATION
+        let lockStart = CACurrentMediaTime()
         frameLock.lock()
+        let lockWaitMs = Int((CACurrentMediaTime() - lockStart) * 1000)
         guard let pixelBuffer = currentPixelBuffer else {
             frameLock.unlock()
             return
         }
         frameLock.unlock()
+        if lockWaitMs > 1 {
+            print("⚠️ [Stereo-Metal] Lock wait: \(lockWaitMs)ms")
+        }
 
         // Create textures from pixel buffer (YCbCr format from camera)
         guard let yTexture = createTexture(from: pixelBuffer, planeIndex: 0),
@@ -1171,14 +1803,19 @@ extension StereoARViewController: MTKViewDelegate {
     }
 
     private func drawOcclusion(in view: MTKView) {
-        // Get the current buffers
+        // Get the current buffers - TIMING INSTRUMENTATION
+        let lockStart = CACurrentMediaTime()
         frameLock.lock()
+        let lockWaitMs = Int((CACurrentMediaTime() - lockStart) * 1000)
         guard let pixelBuffer = currentPixelBuffer,
               let segmentationBuffer = currentSegmentationBuffer else {
             frameLock.unlock()
             return
         }
         frameLock.unlock()
+        if lockWaitMs > 1 {
+            print("⚠️ [Stereo-Occlusion] Lock wait: \(lockWaitMs)ms")
+        }
 
         // Create textures
         guard let yTexture = createTexture(from: pixelBuffer, planeIndex: 0),

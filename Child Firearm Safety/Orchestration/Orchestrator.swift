@@ -43,7 +43,11 @@ final class Orchestrator: ObservableObject {
         ) { [weak self] note in
             guard let self else { return }
             // print("📬 [ORCH \(self.instanceID)] Received .arTrainingEvent notification")
-            guard let e = note.userInfo?[BusKey.arevent] as? AREvent else { return }
+            guard let e = note.userInfo?[BusKey.arevent] as? AREvent else {
+                // print("❌ [ORCH \(self.instanceID)] No AR event in notification!")
+                return
+            }
+            // print("📦 [ORCH \(self.instanceID)] Extracted event: \(e)")
             Task { @MainActor in
                 self.handleAREvent(e)
             }
@@ -105,11 +109,22 @@ final class Orchestrator: ObservableObject {
 
     // MARK: - Event handlers
     func handleAREvent(_ e: AREvent) {
-        print("📥 [Orchestrator] Received AR event: \(e) in phase: \(phase)")
+        // print("📥 [Orchestrator] Received AR event: \(e) in phase: \(phase)")
+
+        // Check if this is a reach gesture specifically
+        if case .reachGesture = e {
+            // print("🎯 [Orchestrator] This is a REACH GESTURE event!")
+            // print("   Current phase: \(phase)")
+            // print("   Expected phase: encounterPending")
+            // print("   Phase matches: \(phase == .encounterPending)")
+        }
+
         switch (phase, e) {
         case (.exploration, .gunProximityNear(_)):
+            // print("✅ [Orchestrator] Matched: exploration + gunProximityNear")
             lastNearTime = Date()
             phase = .encounterPending
+            // print("   Phase changed to: \(phase)")
 
         case (.encounterPending, .childBacksAway(let delta)) where delta > backAwayDelta:
             behaviorTracker.ranAwayPhysically = true
@@ -123,7 +138,17 @@ final class Orchestrator: ObservableObject {
             say(.praiseRanAway)
             toReflectionSoon()
 
-        case (.encounterPending, .reachGesture):
+        case (.encounterPending, .reachGesture), (.exploration, .reachGesture):
+            // print("🎯 [Orchestrator] REACH GESTURE detected!")
+            // print("   Phase: \(phase) (will auto-transition to encounterPending if needed)")
+
+            // If we're still in exploration, transition to encounterPending first
+            // (This happens if user got close during onboarding and proximity event didn't trigger phase change)
+            if phase == .exploration {
+                // print("   Auto-transitioning from exploration → encounterPending")
+                phase = .encounterPending
+            }
+
             // Time-based deduplication (safety net)
             let now = Date()
             if let lastTime = lastReachGestureTime,
@@ -143,15 +168,19 @@ final class Orchestrator: ObservableObject {
             resetAttempts += 1
             // print("🔄 [Orchestrator] Processing reach gesture. Attempt \(resetAttempts)/\(maxResetAttempts)")
 
+            // print("📤 [Orchestrator] Posting setGunVisibility:false")
             postARCommand("setGunVisibility:false")
 
             if resetAttempts < maxResetAttempts {
+                // print("📤 [Orchestrator] Setting phase to resetLoop")
                 phase = .resetLoop
                 postARCommand("disableTapDuringSpeech")  // Disable taps while model speaks
+                // print("📤 [Orchestrator] Telling voice coach to say instructReset")
                 say(.instructReset)
                 // Don't auto-reset - wait for user to tap screen to confirm they're ready
                 // print("🔄 [Orchestrator] Waiting for user tap to reset...")
             } else {
+                // print("📤 [Orchestrator] Max attempts reached, going to coaching path")
                 phase = .coachingPath
                 say(.coachDontTouchWhy)
                 toReflectionSoon()
