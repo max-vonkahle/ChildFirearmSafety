@@ -7,11 +7,11 @@
 
 import Foundation
 
-/// REST API client for Gemini text-embedding-004
+/// REST API client for Gemini gemini-embedding-001
 class GeminiEmbeddingClient {
 
     private let apiKey: String
-    private let baseURL = "https://generativelanguage.googleapis.com/v1/models/text-embedding-004:embedContent"
+    private let baseURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents"
     private let session: URLSession
 
     enum EmbeddingError: Error {
@@ -82,7 +82,7 @@ class GeminiEmbeddingClient {
         let requestBody: [String: Any] = [
             "requests": texts.map { text in
                 [
-                    "model": "models/text-embedding-004",
+                    "model": "models/gemini-embedding-001",
                     "content": [
                         "parts": [
                             ["text": text]

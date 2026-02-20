@@ -152,6 +152,7 @@ import SwiftUI
 struct SettingsView: View {
     @State private var apiKey: String = UserDefaults.standard.string(forKey: "gemini_api_key") ?? ""
     @AppStorage("cardboardMode") private var cardboardMode = false
+    @AppStorage("ragUseTFIDF") private var ragUseTFIDF = false
     @State private var saved = false
     
     // Training prompt - load custom if exists, otherwise show default
@@ -168,6 +169,11 @@ struct SettingsView: View {
         Form {
             Section(header: Text("Display")) {
                 Toggle("Cardboard Viewer Mode", isOn: $cardboardMode)
+                    .toggleStyle(SwitchToggleStyle(tint: .blue))
+            }
+
+            Section(header: Text("Knowledge Retrieval"), footer: Text("Local mode uses keyword matching with no API calls. Default uses AI embeddings for better accuracy.")) {
+                Toggle("Local Only (TF-IDF)", isOn: $ragUseTFIDF)
                     .toggleStyle(SwitchToggleStyle(tint: .blue))
             }
 

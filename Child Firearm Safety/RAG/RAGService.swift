@@ -76,30 +76,39 @@ class RAGService {
         }
 
         let effectiveLimit = limit ?? mode.defaultLimit
+        let useTFIDF = UserDefaults.standard.bool(forKey: "ragUseTFIDF")
 
-        // Step 1: TF-IDF filter to top 10 candidates
-        let tfidfCandidates = tfidfRetriever.retrieve(
-            query: query,
-            documents: documents,
-            limit: min(10, documents.count)
-        )
-
-        // Step 2: Semantic rerank if available
         let finalDocuments: [RAGDocument]
-        if let semanticRetriever = semanticRetriever, embeddingClient != nil {
+        if useTFIDF {
+            // TF-IDF only mode: fully local, no API calls
+            finalDocuments = tfidfRetriever.retrieve(
+                query: query,
+                documents: documents,
+                limit: effectiveLimit
+            )
+        } else if let semanticRetriever = semanticRetriever, embeddingClient != nil {
+            // Default: cosine similarity over all documents
             do {
                 finalDocuments = try await semanticRetriever.retrieve(
                     query: query,
-                    candidates: tfidfCandidates,
+                    candidates: documents,
                     limit: effectiveLimit
                 )
             } catch {
                 // print("RAGService: Semantic retrieval failed, falling back to TF-IDF: \(error)")
-                finalDocuments = Array(tfidfCandidates.prefix(effectiveLimit))
+                finalDocuments = tfidfRetriever.retrieve(
+                    query: query,
+                    documents: documents,
+                    limit: effectiveLimit
+                )
             }
         } else {
-            // Fall back to TF-IDF only
-            finalDocuments = Array(tfidfCandidates.prefix(effectiveLimit))
+            // No API key set, fall back to TF-IDF
+            finalDocuments = tfidfRetriever.retrieve(
+                query: query,
+                documents: documents,
+                limit: effectiveLimit
+            )
         }
 
         // Step 3: Format as coaching guidance
