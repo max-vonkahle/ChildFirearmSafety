@@ -124,7 +124,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Default IPD; can still be overridden via StereoConfig if you want
     private var ipd: Float = 0.064
     // Horizontal offset as percentage of image width for stereo hack
-    private var stereoOffset: CGFloat = 0.03
+    private var stereoOffset: CGFloat = 0.08
     // Screen/viewport parameters for off-axis projection
     private var screenAspect: Float = 16.0 / 9.0
     private let zNear: Float = 0.001
@@ -1013,7 +1013,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     }
 
     private func stereoProjection(from baseProjection: SCNMatrix4, isLeftEye: Bool) -> SCNMatrix4 {
-        baseProjection
+        var proj = baseProjection
+        let shift = Float(stereoOffset) * stereoMultiplier * (isLeftEye ? -1.0 : 1.0)
+        proj.m31 += shift
+        return proj
     }
 
     private func updateOffAxisProjection() {
