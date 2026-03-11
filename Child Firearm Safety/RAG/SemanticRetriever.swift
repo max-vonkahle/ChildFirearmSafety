@@ -18,9 +18,16 @@ class SemanticRetriever {
 
     /// Retrieve top documents using semantic similarity
     func retrieve(query: String, candidates: [RAGDocument], limit: Int) async throws -> [RAGDocument] {
+        try await retrieveRanked(query: query, candidates: candidates, limit: limit)
+            .map { $0.document }
+    }
+
+    /// Retrieve top documents and scores (for debugging/testing UI)
+    func retrieveRanked(query: String, candidates: [RAGDocument], limit: Int) async throws -> [RAGResult] {
         guard let embeddingClient = embeddingClient else {
-            // No embedding client available, return candidates as-is
-            return Array(candidates.prefix(limit))
+            throw NSError(domain: "SemanticRetriever", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Embedding client unavailable"
+            ])
         }
 
         // Compute query embedding
@@ -30,21 +37,22 @@ class SemanticRetriever {
         let candidatesWithEmbeddings = candidates.filter { $0.embedding != nil }
 
         // Compute cosine similarity for each candidate
-        var results: [(document: RAGDocument, score: Float)] = []
+        var results: [RAGResult] = []
         for candidate in candidatesWithEmbeddings {
             guard let docEmbedding = candidate.embedding else {
                 continue
             }
 
             let similarity = cosineSimilarity(queryEmbedding, docEmbedding)
-            results.append((document: candidate, score: similarity))
+            results.append(RAGResult(document: candidate, score: similarity))
         }
 
         // Sort by similarity and return top N
-        return results
-            .sorted { $0.score > $1.score }
-            .prefix(limit)
-            .map { $0.document }
+        return Array(
+            results
+                .sorted { $0.score > $1.score }
+                .prefix(limit)
+        )
     }
 
     /// Compute cosine similarity between two vectors

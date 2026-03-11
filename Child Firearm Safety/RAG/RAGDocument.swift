@@ -41,7 +41,7 @@ struct RAGMetadata: Codable {
 }
 
 /// Mode for RAG retrieval affecting behavior and limits
-enum RAGMode {
+enum RAGMode: String, CaseIterable, Hashable {
     case training    // During active training sessions
     case testing     // During test mode
     case runtime     // General runtime usage

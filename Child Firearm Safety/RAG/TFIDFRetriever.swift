@@ -16,6 +16,12 @@ class TFIDFRetriever {
 
     /// Retrieve top documents using TF-IDF scoring
     func retrieve(query: String, documents: [RAGDocument], limit: Int = 10) -> [RAGDocument] {
+        retrieveRanked(query: query, documents: documents, limit: limit)
+            .map { $0.document }
+    }
+
+    /// Retrieve top documents with TF-IDF scores (for debugging/testing UI)
+    func retrieveRanked(query: String, documents: [RAGDocument], limit: Int = 10) -> [RAGResult] {
         // Recompute IDF if documents changed
         let currentHash = documents.map { $0.id }.hashValue
         if currentHash != documentsHash {
@@ -26,10 +32,11 @@ class TFIDFRetriever {
         let queryTokens = tokenize(query)
         let results = computeTFIDF(queryTokens: queryTokens, documents: documents)
 
-        return results
-            .sorted { $0.score > $1.score }
-            .prefix(limit)
-            .map { $0.document }
+        return Array(
+            results
+                .sorted { $0.score > $1.score }
+                .prefix(limit)
+        )
     }
 
     /// Tokenize text into words

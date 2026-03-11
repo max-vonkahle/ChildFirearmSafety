@@ -12,6 +12,8 @@ struct RAGTestView: View {
     @State private var results: String = ""
     @State private var isLoading = false
     @State private var cacheStats: String = ""
+    @State private var testMode: RAGMode = .runtime
+    @State private var testLimit: Int = 3
 
     var body: some View {
         VStack(spacing: 20) {
@@ -30,12 +32,12 @@ struct RAGTestView: View {
 
                 HStack(spacing: 12) {
                     Button("Test TF-IDF") {
-                        testRetrieval(mode: .training, limit: 3)
+                        testRetrieval(forcing: .tfidf)
                     }
                     .buttonStyle(.borderedProminent)
 
                     Button("Test Semantic") {
-                        testRetrieval(mode: .runtime, limit: 2)
+                        testRetrieval(forcing: .semantic)
                     }
                     .buttonStyle(.borderedProminent)
 
@@ -47,6 +49,19 @@ struct RAGTestView: View {
                 }
                 .padding(.horizontal)
                 .disabled(isLoading)
+
+                HStack(spacing: 12) {
+                    Picker("Mode", selection: $testMode) {
+                        Text("Runtime").tag(RAGMode.runtime)
+                        Text("Training").tag(RAGMode.training)
+                        Text("Testing").tag(RAGMode.testing)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Stepper("Limit: \(testLimit)", value: $testLimit, in: 1...10)
+                        .frame(maxWidth: 140)
+                }
+                .padding(.horizontal)
             }
 
             // Cache stats
@@ -82,27 +97,40 @@ struct RAGTestView: View {
         }
     }
 
-    private func testRetrieval(mode: RAGMode, limit: Int) {
+    private func testRetrieval(forcing backend: RAGRetrievalBackend) {
         isLoading = true
         results = "Retrieving..."
 
         Task {
+            // Re-read API key if the user changed it in Settings without restarting the app.
+            RAGService.shared.refreshEmbeddingClient()
             let start = Date()
-            let context = await RAGService.shared.retrieveContext(
+            let debug = await RAGService.shared.retrieveDebugContext(
                 for: query,
-                mode: mode,
-                limit: limit
+                mode: testMode,
+                limit: testLimit,
+                forceBackend: backend
             )
             let elapsed = Date().timeIntervalSince(start)
 
             await MainActor.run {
+                let rankedLines = debug.results.enumerated().map { index, result in
+                    "\(index + 1). score=\(String(format: "%.4f", result.score)) | \(result.document.title)"
+                }.joined(separator: "\n")
+
                 results = """
                 Query: \(query)
-                Mode: \(mode)
-                Limit: \(limit)
+                Mode: \(String(describing: testMode))
+                Limit: \(testLimit)
+                Requested Backend: \(debug.requestedBackend.rawValue)
+                Used Backend: \(debug.usedBackend.rawValue)
+                Fallback: \(debug.fallbackReason ?? "None")
                 Time: \(String(format: "%.3f", elapsed))s
 
-                \(context)
+                Ranked Results:
+                \(rankedLines.isEmpty ? "(none)" : rankedLines)
+
+                \(debug.formattedContext)
                 """
                 isLoading = false
                 updateCacheStats()

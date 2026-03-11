@@ -31,9 +31,15 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Testing mode support
     var testingRoomId: String?
     var onTestingSceneReady: (() -> Void)?
+    var onTestingAlignmentStatus: ((StartPositionAlignmentStatus?) -> Void)?
+    var onTestingStartTransformLoaded: ((simd_float4x4?) -> Void)?
+    var testingActiveStage: TestingStage = .kitchen
+    var testingAlignmentTrackingEnabled: Bool = false
     private var testingAssetTransforms: [String: simd_float4x4] = [:]
+    private var testingStartCameraTransform: simd_float4x4?
     private var testingAssetsPlaced = false
     private var relocalizationTimer: Timer?
+    private var testingStageNodes: [SCNNode] = []
 
     // GPU-accelerated passthrough views using Metal
     private var metalDevice: MTLDevice!
@@ -394,6 +400,22 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         currentSegmentationBuffer = frame.segmentationBuffer
         frameLock.unlock()
 
+        if testingRoomId != nil {
+            if testingAlignmentTrackingEnabled, let testingStartCameraTransform {
+                let status = RoomLibrary.startAlignmentStatus(
+                    currentCameraTransform: frame.camera.transform,
+                    targetStartTransform: testingStartCameraTransform
+                )
+                DispatchQueue.main.async { [weak self] in
+                    self?.onTestingAlignmentStatus?(status)
+                }
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onTestingAlignmentStatus?(nil)
+                }
+            }
+        }
+
         // Testing: wait for relocalization before placing assets
         if testingRoomId != nil && !testingAssetsPlaced {
             switch frame.worldMappingStatus {
@@ -731,11 +753,14 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private func startTestingSession(roomId: String) {
         guard let roomData = RoomLibrary.loadTestingRoom(roomId: roomId) else {
             print("⚠️ Failed to load testing room: \(roomId)")
+            onTestingStartTransformLoaded?(nil)
             onTestingSceneReady?()
             return
         }
 
         testingAssetTransforms = roomData.assets
+        testingStartCameraTransform = roomData.startCameraTransform
+        onTestingStartTransformLoaded?(testingStartCameraTransform)
 
         let cfg = ARWorldTrackingConfiguration()
         cfg.planeDetection = [.horizontal]
@@ -766,29 +791,48 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         }
     }
 
-    private func placeTestingAssets() {
-        // print("\n🔧 === PLACING TESTING ASSETS (STEREO) ===")
-
-        guard let kitchenTransform = testingAssetTransforms["kitchen"] else {
-            // print("⚠️ No kitchen transform in testing room data")
+    func updateTestingStage(_ stage: TestingStage) {
+        if testingActiveStage == stage && !testingStageNodes.isEmpty {
             return
         }
-
-        // Kitchen at natural size (no scaling — matches TestingARViewController)
-        placeTestingModel(named: "kitchen", at: kitchenTransform)
-
-        // Gun scaled to 0.2m, positioned relative to kitchen
-        let relativeOffset = SIMD3<Float>(0.5823, 0.8431, -2.5297)
-        let gunTransform = calculateTestingGunTransform(kitchenTransform: kitchenTransform, relativeOffset: relativeOffset)
-        placeTestingModel(named: "gun", at: gunTransform, targetWidth: 0.2, isGun: true)
-
-        // print("=== TESTING ASSET PLACEMENT COMPLETE ===\n")
+        testingActiveStage = stage
+        guard testingAssetsPlaced else { return }
+        placeTestingAssets()
     }
 
-    private func placeTestingModel(named name: String, at transform: simd_float4x4, targetWidth: Float? = nil, isGun: Bool = false) {
+    private func clearCurrentTestingStageNodes() {
+        for node in testingStageNodes {
+            node.removeFromParentNode()
+        }
+        testingStageNodes.removeAll()
+        gunNodes.removeAll()
+    }
+
+    private func placeTestingAssets() {
+        clearCurrentTestingStageNodes()
+
+        let stage = testingActiveStage
+        let fallbackStage: TestingStage = .kitchen
+        let chosenStage = testingAssetTransforms[stage.assetName] != nil ? stage : fallbackStage
+
+        guard let roomTransform = testingAssetTransforms[chosenStage.assetName] else { return }
+
+        if let roomNode = placeTestingModel(named: chosenStage.assetName, at: roomTransform) {
+            testingStageNodes.append(roomNode)
+        }
+
+        let gunTransform = testingAssetTransforms[chosenStage.gunAssetKey] ??
+            RoomLibrary.calculateGunTransform(roomTransform: roomTransform, relativeOffset: chosenStage.gunRelativeOffset, yawOffset: chosenStage.gunYawOffset)
+        if let gunNode = placeTestingModel(named: "gun", at: gunTransform, targetWidth: 0.2, isGun: true) {
+            testingStageNodes.append(gunNode)
+        }
+    }
+
+    @discardableResult
+    private func placeTestingModel(named name: String, at transform: simd_float4x4, targetWidth: Float? = nil, isGun: Bool = false) -> SCNNode? {
         guard let url = Bundle.main.url(forResource: name, withExtension: "usdz") else {
             // print("⚠️ \(name).usdz not found")
-            return
+            return nil
         }
 
         do {
@@ -808,6 +852,11 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                     modelNode.scale = SCNVector3(scale, scale, scale)
                     // print("📏 Scaled \(name): \(currentWidth)m -> \(targetWidth)m (factor: \(scale))")
                 }
+            } else {
+                let roomScale = TestingRoomTemplate.scaleMultiplier(for: name)
+                if roomScale != 1.0 {
+                    modelNode.scale = SCNVector3(roomScale, roomScale, roomScale)
+                }
             }
 
             // Correct USDZ base orientation (-90° X)
@@ -821,10 +870,9 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 modelNode.transform = SCNMatrix4Mult(rotZ, SCNMatrix4Mult(rotX, modelNode.transform))
             }
 
-            // Position kitchen to sit flush on the ground
-            if name == "kitchen" {
-                modelNode.position = SCNVector3(0, -0.05, 0)
-            }
+            // No Y offset needed: after -90°X rotation the kitchen's min.z (≈0.02) maps to
+            // world Y ≈ 0.02, matching RealityKit's min.y exactly. The previous -0.05 offset
+            // was sinking the table 5cm below where the gun position was saved.
 
             // Wrap in a container positioned at the saved world-space transform
             let containerNode = SCNNode()
@@ -840,27 +888,11 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
             let pos = transform.columns.3
             // print("✅ Placed \(name) at (\(pos.x), \(pos.y), \(pos.z))")
+            return containerNode
         } catch {
             print("❌ Failed to load \(name): \(error)")
+            return nil
         }
-    }
-
-    private func calculateTestingGunTransform(kitchenTransform: simd_float4x4, relativeOffset: SIMD3<Float>) -> simd_float4x4 {
-        let kitchenPosition = SIMD3<Float>(
-            kitchenTransform.columns.3.x,
-            kitchenTransform.columns.3.y,
-            kitchenTransform.columns.3.z
-        )
-        let rotationMatrix = simd_float3x3(
-            SIMD3<Float>(kitchenTransform.columns.0.x, kitchenTransform.columns.0.y, kitchenTransform.columns.0.z),
-            SIMD3<Float>(kitchenTransform.columns.1.x, kitchenTransform.columns.1.y, kitchenTransform.columns.1.z),
-            SIMD3<Float>(kitchenTransform.columns.2.x, kitchenTransform.columns.2.y, kitchenTransform.columns.2.z)
-        )
-        let rotatedOffset = rotationMatrix * relativeOffset
-        let gunPosition = kitchenPosition + rotatedOffset
-        var gunTransform = kitchenTransform
-        gunTransform.columns.3 = SIMD4<Float>(gunPosition.x, gunPosition.y, gunPosition.z, 1.0)
-        return gunTransform
     }
 
     // MARK: - Cardboard reticle / mask (ported from ARFun)
@@ -1168,7 +1200,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         currentFrameNumber += 1
 
         // Debug: log that we're processing
-        if currentFrameNumber % 60 == 0 {
+        if currentFrameNumber % 1000 == 0 {
             print("✅ [Stereo-Gesture] Processing frame \(currentFrameNumber)")
         }
 
@@ -1188,7 +1220,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                     lastNearDistance = d
                     lastNearTime = tNow
                     isRetreating = false
-                    // print("📍 [Stereo-Gesture] User entered near zone (d=\(d)m) - posting gunProximityNear to \(arEventNotification)")
+                    print("📍 [Stereo-Retreat] Entered near zone at d=\(String(format: "%.2f", d))m — posting gunProximityNear")
                     NotificationCenter.default.post(name: arEventNotification, object: nil,
                         userInfo: [BusKey.arevent: AREvent.gunProximityNear(distance: d)])
                 }
@@ -1200,16 +1232,19 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                         isRetreating = true
                         retreatStartDistance = d
                         retreatStartTime = tNow
+                        print("📍 [Stereo-Retreat] Retreat started at d=\(String(format: "%.2f", d))m")
                     }
 
                     if isRetreating {
                         let retreatElapsed = tNow - retreatStartTime
-                        let retreatDistance = d - retreatStartDistance
+                        // Measure from closest point ever reached (lastNearDistance), not from retreat start
+                        let retreatDistance = d - lastNearDistance
 
                         // Check for running away
                         if retreatDistance > runAwayThreshold, retreatElapsed < runAwayMaxTime {
                             wasNear = false
                             isRetreating = false
+                            print("🏃 [Stereo-Retreat] childRunsAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
                             NotificationCenter.default.post(name: arEventNotification, object: nil,
                                 userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)])
                         }
@@ -1217,12 +1252,19 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                         else if retreatDistance > backAwayThreshold, retreatElapsed < backAwayMaxTime {
                             wasNear = false
                             isRetreating = false
+                            print("🚶 [Stereo-Retreat] childBacksAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
                             NotificationCenter.default.post(name: arEventNotification, object: nil,
                                 userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)])
                         }
                     }
 
+                    let prevNearDistance = lastNearDistance
                     lastNearDistance = min(lastNearDistance, d)
+                    // If user returned closer, reset retreat so the next walk-away gets a fresh timer
+                    if lastNearDistance < prevNearDistance && isRetreating {
+                        print("📍 [Stereo-Retreat] User returned closer (d=\(String(format: "%.2f", d))m) — resetting retreat timer")
+                        isRetreating = false
+                    }
                 }
             }
 

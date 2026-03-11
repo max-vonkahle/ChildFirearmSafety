@@ -7,6 +7,19 @@
 
 import Foundation
 
+enum RAGRetrievalBackend: String {
+    case tfidf = "TF-IDF"
+    case semantic = "Semantic"
+}
+
+struct RAGRetrievalDebugResult {
+    let requestedBackend: RAGRetrievalBackend
+    let usedBackend: RAGRetrievalBackend
+    let fallbackReason: String?
+    let results: [RAGResult]
+    let formattedContext: String
+}
+
 /// Main service orchestrating RAG retrieval pipeline
 class RAGService {
 
@@ -31,6 +44,9 @@ class RAGService {
 
     /// Setup embedding client using API key from UserDefaults
     private func setupEmbeddingClient() {
+        embeddingClient = nil
+        semanticRetriever = nil
+
         if let apiKey = UserDefaults.standard.string(forKey: "gemini_api_key"), !apiKey.isEmpty {
             embeddingClient = GeminiEmbeddingClient(apiKey: apiKey)
             semanticRetriever = SemanticRetriever(embeddingClient: embeddingClient)
@@ -63,10 +79,24 @@ class RAGService {
         }
     }
 
+    /// Expands a short query into a richer context string for semantic embedding.
+    /// TF-IDF uses the raw query; semantic search benefits from more document-like phrasing.
+    private func expandQuery(_ query: String) -> String {
+        """
+        Context: A child is participating in an AR firearm safety training simulation. \
+        A voice coach is guiding the child through safe behaviors when encountering an unsupervised firearm. \
+        Relevant research topic: \(query)
+        """
+    }
+
     /// Main retrieval pipeline
     func retrieveContext(for query: String, mode: RAGMode = .runtime, limit: Int? = nil) async -> String {
-        // Check query cache first
-        let cacheKey = "\(query)_\(mode)_\(limit ?? mode.defaultLimit)"
+        let effectiveLimit = limit ?? mode.defaultLimit
+        let useTFIDF = UserDefaults.standard.bool(forKey: "ragUseTFIDF")
+        let semanticAvailable = embeddingClient != nil
+
+        // Check query cache first (include retrieval strategy state to avoid stale collisions)
+        let cacheKey = "\(query)_\(mode)_\(effectiveLimit)_tfidf:\(useTFIDF)_semanticAvailable:\(semanticAvailable)"
         if let cached = queryCache[cacheKey] {
             return cached
         }
@@ -75,22 +105,20 @@ class RAGService {
             return ""
         }
 
-        let effectiveLimit = limit ?? mode.defaultLimit
-        let useTFIDF = UserDefaults.standard.bool(forKey: "ragUseTFIDF")
-
         let finalDocuments: [RAGDocument]
         if useTFIDF {
-            // TF-IDF only mode: fully local, no API calls
+            // TF-IDF only mode: fully local, no API calls — use raw query for keyword matching
             finalDocuments = tfidfRetriever.retrieve(
                 query: query,
                 documents: documents,
                 limit: effectiveLimit
             )
         } else if let semanticRetriever = semanticRetriever, embeddingClient != nil {
-            // Default: cosine similarity over all documents
+            // Semantic: expand query with context before embedding
+            let expandedQuery = expandQuery(query)
             do {
                 finalDocuments = try await semanticRetriever.retrieve(
-                    query: query,
+                    query: expandedQuery,
                     candidates: documents,
                     limit: effectiveLimit
                 )
@@ -124,6 +152,93 @@ class RAGService {
         }
 
         return formattedContext
+    }
+
+    /// Force a specific backend and return debugging details (used by RAG test UI).
+    func retrieveDebugContext(
+        for query: String,
+        mode: RAGMode = .runtime,
+        limit: Int? = nil,
+        forceBackend: RAGRetrievalBackend
+    ) async -> RAGRetrievalDebugResult {
+        let effectiveLimit = limit ?? mode.defaultLimit
+
+        guard !documents.isEmpty else {
+            return RAGRetrievalDebugResult(
+                requestedBackend: forceBackend,
+                usedBackend: .tfidf,
+                fallbackReason: "No RAG documents loaded",
+                results: [],
+                formattedContext: ""
+            )
+        }
+
+        switch forceBackend {
+        case .tfidf:
+            let ranked = tfidfRetriever.retrieveRanked(
+                query: query,
+                documents: documents,
+                limit: effectiveLimit
+            )
+            return RAGRetrievalDebugResult(
+                requestedBackend: .tfidf,
+                usedBackend: .tfidf,
+                fallbackReason: nil,
+                results: ranked,
+                formattedContext: formatContext(documents: ranked.map(\.document), mode: mode)
+            )
+
+        case .semantic:
+            guard let semanticRetriever = semanticRetriever, embeddingClient != nil else {
+                let ranked = tfidfRetriever.retrieveRanked(
+                    query: query,
+                    documents: documents,
+                    limit: effectiveLimit
+                )
+                return RAGRetrievalDebugResult(
+                    requestedBackend: .semantic,
+                    usedBackend: .tfidf,
+                    fallbackReason: "Semantic unavailable (missing Gemini API key or embedding client not initialized).",
+                    results: ranked,
+                    formattedContext: formatContext(documents: ranked.map(\.document), mode: mode)
+                )
+            }
+
+            let expandedQuery = expandQuery(query)
+            do {
+                let ranked = try await semanticRetriever.retrieveRanked(
+                    query: expandedQuery,
+                    candidates: documents,
+                    limit: effectiveLimit
+                )
+                return RAGRetrievalDebugResult(
+                    requestedBackend: .semantic,
+                    usedBackend: .semantic,
+                    fallbackReason: nil,
+                    results: ranked,
+                    formattedContext: formatContext(documents: ranked.map(\.document), mode: mode)
+                )
+            } catch {
+                let ranked = tfidfRetriever.retrieveRanked(
+                    query: query,
+                    documents: documents,
+                    limit: effectiveLimit
+                )
+                return RAGRetrievalDebugResult(
+                    requestedBackend: .semantic,
+                    usedBackend: .tfidf,
+                    fallbackReason: "Semantic failed and fell back to TF-IDF: \(error.localizedDescription)",
+                    results: ranked,
+                    formattedContext: formatContext(documents: ranked.map(\.document), mode: mode)
+                )
+            }
+        }
+    }
+
+    /// Re-read API key and rebuild embedding client after Settings changes.
+    func refreshEmbeddingClient() {
+        setupEmbeddingClient()
+        clearCaches()
     }
 
     /// Format retrieved documents as coaching guidance text
@@ -160,10 +275,13 @@ class RAGService {
     /// Get cache statistics
     func getCacheStats() -> String {
         let docsWithEmbeddings = documents.filter { $0.embedding != nil }.count
+        let hasAPIKey = !(UserDefaults.standard.string(forKey: "gemini_api_key") ?? "").isEmpty
         return """
         RAG Stats:
         - Total documents: \(documents.count)
         - Documents with embeddings: \(docsWithEmbeddings)
+        - Gemini API key set: \(hasAPIKey ? "Yes" : "No")
+        - Semantic client initialized: \(embeddingClient != nil ? "Yes" : "No")
         - In-memory query cache: \(queryCache.count) entries
         """
     }

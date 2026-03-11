@@ -198,6 +198,7 @@ struct OrchestratorView: View {
 
     private func phaseLabel(_ p: SessionPhase) -> String {
         switch p {
+        case .verbalRecitation: return "Verbal Recitation"
         case .onboarding: return "Onboarding"
         case .exploration: return "Exploration"
         case .encounterPending: return "Encounter"
@@ -205,6 +206,7 @@ struct OrchestratorView: View {
         case .coachingPath: return "Coaching"
         case .resetLoop: return "Resetting"
         case .reflection: return "Reflection"
+        case .tellAdultPrompt: return "Tell Adult"
         case .completed: return "Completed"
         case .wrapup: return "Wrap-up"
         }

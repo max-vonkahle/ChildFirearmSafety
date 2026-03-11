@@ -40,6 +40,10 @@ final class GeminiFlashLiveClient {
 
         /// Called on any error during the session or streaming.
         var onError: ((Error) -> Void)?
+
+        /// Called when the model calls `signal_phase_complete` via tool calling.
+        /// - Parameter phase: One of "verbal_phase_complete", "training_complete", "test_stage_complete".
+        var onPhaseComplete: ((String) -> Void)?
     }
 
     /// Singleton for most use-cases.
@@ -256,13 +260,35 @@ final class GeminiFlashLiveClient {
         let systemInstruction = systemInstructionText.map { text in
             ModelContent(role: "system", parts: [TextPart(text)])
         }
-        
+
+        // Tool declarations for native function calling
+        let triggerIntentFunc = FunctionDeclaration(
+            name: "trigger_intent",
+            description: "Signal the app when the child expresses a specific intent or clearly explains a safety rule.",
+            parameters: [
+                "intent": .string(
+                    description: "The detected intent. Must be one of: calledAdult, askedWhatIsThat, askedIsThatReal, generalQuestion, explainedStop, explainedDontTouch, explainedRunAway, explainedTellAdult"
+                ),
+            ]
+        )
+        let signalPhaseCompleteFunc = FunctionDeclaration(
+            name: "signal_phase_complete",
+            description: "Signal the app that the current training or testing phase has been completed.",
+            parameters: [
+                "phase": .string(
+                    description: "The completed phase. Must be one of: verbal_phase_complete, training_complete, test_stage_complete"
+                ),
+            ]
+        )
+        let appTools: [Tool] = [.functionDeclarations([triggerIntentFunc, signalPhaseCompleteFunc])]
+
         // Debug logging:
         // print("🟣 [Live] connecting live model:", modelName)
 
         let model = aiService.liveModel(
             modelName: modelName,
             generationConfig: generation,
+            tools: appTools,
             systemInstruction: systemInstruction
         )
 
@@ -316,7 +342,9 @@ final class GeminiFlashLiveClient {
 
                 for part in turn.parts {
                     if let textPart = part as? TextPart {
-                        // Plain text token/turn
+                        // Skip thinking/reasoning tokens — they are internal chain-of-thought,
+                        // not spoken content, and should not appear in the transcript.
+                        guard !textPart.isThought else { continue }
                         #if DEBUG
                         // print("🟩 [LLM ← text] \(textPart.text)")
                         #endif
@@ -373,9 +401,45 @@ final class GeminiFlashLiveClient {
             currentHandlers?.onDone?()
             currentHandlers = nil
 
-        case .toolCall, .toolCallCancellation:
-            // Not used yet; ignore.
-            break
+        case .toolCall(let toolCall):
+            guard let functionCalls = toolCall.functionCalls else { break }
+            var responses: [FunctionResponsePart] = []
+            for fc in functionCalls {
+                switch fc.name {
+                case "trigger_intent":
+                    if case let .string(intentStr) = fc.args["intent"],
+                       let intent = mapStringToVCIntent(intentStr) {
+                        print("🛠 [Live] trigger_intent → \(intentStr)")
+                        NotificationCenter.default.post(
+                            name: .vcIntent,
+                            object: nil,
+                            userInfo: [BusKey.vcintent: intent]
+                        )
+                    }
+                case "signal_phase_complete":
+                    if case let .string(phase) = fc.args["phase"] {
+                        print("🛠 [Live] signal_phase_complete → \(phase)")
+                        handlers.onPhaseComplete?(phase)
+                    }
+                default:
+                    print("⚠️ [Live] Unknown tool call: \(fc.name)")
+                }
+                responses.append(FunctionResponsePart(
+                    name: fc.name,
+                    response: ["status": .string("success")],
+                    functionId: fc.functionId
+                ))
+            }
+            if !responses.isEmpty {
+                Task { [weak self] in
+                    await self?.session?.sendFunctionResponses(responses)
+                }
+            }
+
+        case .toolCallCancellation:
+            #if DEBUG
+            print("⚠️ [Live] Tool call cancelled by server")
+            #endif
         }
     }
 
@@ -414,6 +478,22 @@ final class GeminiFlashLiveClient {
         liveModel = nil
         if let oldSession {
             await oldSession.close()
+        }
+    }
+
+    private func mapStringToVCIntent(_ string: String) -> VCIntent? {
+        switch string {
+        case "calledAdult":       return .calledAdult(text: "", conf: 1.0)
+        case "askedWhatIsThat":   return .askedWhatIsThat(text: "", conf: 1.0)
+        case "askedIsThatReal":   return .askedIsThatReal(text: "", conf: 1.0)
+        case "generalQuestion":   return .generalQuestion(text: "")
+        case "explainedStop":     return .explainedStop(text: "", conf: 1.0)
+        case "explainedDontTouch":return .explainedDontTouch(text: "", conf: 1.0)
+        case "explainedRunAway":  return .explainedRunAway(text: "", conf: 1.0)
+        case "explainedTellAdult":return .explainedTellAdult(text: "", conf: 1.0)
+        default:
+            print("⚠️ [Live] Unknown intent from LLM: \(string)")
+            return nil
         }
     }
 

@@ -351,8 +351,9 @@ final class VirtualKitchenViewController: UIViewController {
         }
 
         let scaleFactor = targetSize / currentWidth
-        print("📏 Scaling \(assetName): current width \(currentWidth)m -> target \(targetSize)m (factor: \(scaleFactor))")
-        return scaleFactor
+        let correctedScaleFactor = scaleFactor * TestingRoomTemplate.scaleMultiplier(for: assetName)
+        print("📏 Scaling \(assetName): current width \(currentWidth)m -> target \(targetSize)m (factor: \(correctedScaleFactor))")
+        return correctedScaleFactor
     }
 
     private func calculateGunTransform(kitchenTransform: simd_float4x4, relativeOffset: SIMD3<Float>) -> simd_float4x4 {
@@ -416,4 +417,3 @@ final class VirtualKitchenViewController: UIViewController {
         print("=== ASSET PLACEMENT COMPLETE ===\n")
     }
 }
-

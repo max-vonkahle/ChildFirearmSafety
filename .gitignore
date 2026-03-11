@@ -2,3 +2,6 @@ Secrets.xcconfig
 GoogleService-Info.plist
 RAG_IMPLEMENTATION.md
 precompute_embeddings.py
+CLAUDE.md
+RAGDocuments_cleaned.json
+merge_cleaned.py

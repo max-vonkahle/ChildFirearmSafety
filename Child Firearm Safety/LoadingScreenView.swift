@@ -7,6 +7,7 @@
 
 import SwiftUI
 struct LoadingScreenView: View {
+    var message: String = "Loading your training environment..."
     @AppStorage("cardboardMode") private var cardboardMode = false
 
     var body: some View {
@@ -24,7 +25,7 @@ struct LoadingScreenView: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                 .scaleEffect(1.5)
-                            Text("Loading your training environment...")
+                            Text(message)
                                 .font(.headline)
                                 .foregroundColor(.white)
                                 .multilineTextAlignment(.center)
@@ -37,7 +38,7 @@ struct LoadingScreenView: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                 .scaleEffect(1.5)
-                            Text("Loading your training environment...")
+                            Text(message)
                                 .font(.headline)
                                 .foregroundColor(.white)
                                 .multilineTextAlignment(.center)
@@ -55,7 +56,7 @@ struct LoadingScreenView: View {
                         .scaleEffect(1.5)
 
                     // Loading message
-                    Text("Loading your training environment...")
+                    Text(message)
                         .font(.headline)
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)

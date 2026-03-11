@@ -10,7 +10,9 @@ import Foundation
 
 // === Cross-layer events ===
 enum SessionPhase {
+    case verbalRecitation                                                                           // Phase 1: child recites rules before AR encounter
     case onboarding, exploration, encounterPending, praisePath, coachingPath, resetLoop, reflection, completed, wrapup
+    case tellAdultPrompt                                                                            // Post-runaway: child says tell-adult phrase
 }
 
 enum AREvent {
@@ -48,6 +50,8 @@ enum DialogueIntent {
     case answerIsThatReal_safety
     case reflectionQ1
     case trainingComplete                                   // All safety behaviors demonstrated
+    case transitionToActOut                                 // Inject Phase 2 context after verbal phase
+    case promptTellAdultPhrase                              // After running away, ask child to say tell-adult phrase
 }
 
 // === Safety behavior tracking for completion ===
@@ -93,7 +97,10 @@ extension Notification.Name {
     static let vcCommand = Notification.Name("vcCommand")
 
     // Training session completion
+    static let verbalPhaseComplete = Notification.Name("verbalPhaseComplete")
     static let trainingSessionComplete = Notification.Name("trainingSessionComplete")
+    static let testingStageComplete = Notification.Name("testingStageComplete")
+    static let testingSessionComplete = Notification.Name("testingSessionComplete")
 }
 
 // === Payload keys ===

@@ -24,7 +24,8 @@ final class Orchestrator: ObservableObject {
     private let maxResetAttempts: Int = 3
     private var isProcessingReset: Bool = false
     private var arEventObserver: NSObjectProtocol?
-    private var vcIntentObserver: NSObjectProtocol?  // Store second observer for cleanup
+    private var vcIntentObserver: NSObjectProtocol?
+    private var verbalPhaseObserver: NSObjectProtocol?
     private var lastReachGestureTime: Date?
 
     // Safety behavior tracking for completion
@@ -62,32 +63,32 @@ final class Orchestrator: ObservableObject {
                 self.handleVCIntent(i)
             }
         }
+
+        verbalPhaseObserver = NotificationCenter.default.addObserver(
+            forName: .verbalPhaseComplete, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleVerbalPhaseComplete()
+            }
+        }
     }
 
     deinit {
         // print("🧹 [ORCH \(instanceID)] Orchestrator deinitialized and observers removed")
-        // Clean up observers when Orchestrator is destroyed
-        if let observer = arEventObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = vcIntentObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        if let observer = arEventObserver { NotificationCenter.default.removeObserver(observer) }
+        if let observer = vcIntentObserver { NotificationCenter.default.removeObserver(observer) }
+        if let observer = verbalPhaseObserver { NotificationCenter.default.removeObserver(observer) }
     }
 
     // MARK: - Public lifecyle hooks
     func startSession() {
-        phase = .onboarding
+        phase = .verbalRecitation
         resetAttempts = 0
         isProcessingReset = false
-        behaviorTracker = SafetyBehaviorTracker()  // Reset behavior tracking
-        // Tell voice coach to deliver cover story (no safety reveal)
-        say(.coverStoryIntro)
-        // After intro, go exploration
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            self.phase = .exploration
-            self.promptExploration()
-        }
+        behaviorTracker = SafetyBehaviorTracker()
+        // VoiceCoach.startSession() (called by the owning view) handles the scripted intro.
+        // Transition to exploration happens when [VERBAL_PHASE_COMPLETE] fires via verbalPhaseObserver.
     }
 
     func stopSession() {
@@ -105,10 +106,32 @@ final class Orchestrator: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
             vcIntentObserver = nil
         }
+        if let observer = verbalPhaseObserver {
+            NotificationCenter.default.removeObserver(observer)
+            verbalPhaseObserver = nil
+        }
+    }
+
+    // MARK: - Verbal phase handler
+    private func handleVerbalPhaseComplete() {
+        guard phase == .verbalRecitation else {
+            print("⚠️ [Orchestrator \(instanceID)] verbalPhaseComplete received in unexpected phase: \(phase)")
+            return
+        }
+        print("🎓 [Orchestrator \(instanceID)] Verbal phase complete — transitioning to AR exploration")
+        phase = .exploration
+        say(.transitionToActOut)  // VoiceCoach stores this as pendingActOutInstruction
     }
 
     // MARK: - Event handlers
     func handleAREvent(_ e: AREvent) {
+        // Ignore AR events during verbal recitation (child hasn't started the physical act-out yet)
+        guard phase != .verbalRecitation else {
+            print("⏭️ [Orchestrator] AR event ignored (still in verbalRecitation): \(e)")
+            return
+        }
+        print("📥 [Orchestrator] AR event received — phase=\(phase), event=\(e)")
+
         // print("📥 [Orchestrator] Received AR event: \(e) in phase: \(phase)")
 
         // Check if this is a reach gesture specifically
@@ -127,16 +150,16 @@ final class Orchestrator: ObservableObject {
             // print("   Phase changed to: \(phase)")
 
         case (.encounterPending, .childBacksAway(let delta)) where delta > backAwayDelta:
+            print("🏃 [Orchestrator] childBacksAway matched in encounterPending — triggering toTellAdultSoon()")
             behaviorTracker.ranAwayPhysically = true
             phase = .praisePath
-            say(.praiseBackedAway)
-            toReflectionSoon()
+            toTellAdultSoon()
 
         case (.encounterPending, .childRunsAway(let delta, let duration)):
+            print("🏃 [Orchestrator] childRunsAway matched in encounterPending — triggering toTellAdultSoon()")
             behaviorTracker.ranAwayPhysically = true
             phase = .praisePath
-            say(.praiseRanAway)
-            toReflectionSoon()
+            toTellAdultSoon()
 
         case (.encounterPending, .reachGesture), (.exploration, .reachGesture):
             // print("🎯 [Orchestrator] REACH GESTURE detected!")
@@ -205,10 +228,10 @@ final class Orchestrator: ObservableObject {
     func handleVCIntent(_ i: VCIntent) {
         switch i {
         case .calledAdult:
+            print("📢 [Orchestrator] calledAdult VCIntent received — phase=\(phase)")
             if phase == .encounterPending || phase == .exploration {
                 phase = .praisePath
-                say(.praiseBackedAway)
-                toReflectionSoon()
+                toTellAdultSoon()
             }
 
         case .askedWhatIsThat:
@@ -245,18 +268,28 @@ final class Orchestrator: ObservableObject {
     }
 
     // MARK: - Helpers
+    private func toTellAdultSoon() {
+        print("⏱️ [Orchestrator] Child ran away — starting 2.5s silence gap before tell-adult prompt")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            print("⏱️ [Orchestrator] Silence gap elapsed — firing promptTellAdultPhrase now")
+            self.phase = .tellAdultPrompt
+            self.say(.promptTellAdultPhrase)
+        }
+    }
+
     private func toReflectionSoon() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             self.phase = .reflection
             self.say(.reflectionQ1)
-            // Don't auto-transition to wrapup - checkForCompletion will handle that
-            // when all behaviors are demonstrated
         }
     }
 
     private func checkForCompletion() {
-        guard phase == .reflection else { return }
-        // print("🔍 [Orchestrator] Checking completion: \(behaviorTracker.completedCount)/4 behaviors")
+        print("🔍 [Orchestrator] checkForCompletion called — phase=\(phase), allComplete=\(behaviorTracker.allBehaviorsComplete)")
+        guard phase == .reflection else {
+            print("⏭️ [Orchestrator] checkForCompletion skipped — phase is \(phase), not .reflection")
+            return
+        }
 
         if behaviorTracker.allBehaviorsComplete {
             // print("🎉 [Orchestrator] All behaviors complete! Triggering training completion")
