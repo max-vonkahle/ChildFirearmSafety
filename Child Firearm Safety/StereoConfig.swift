@@ -13,6 +13,9 @@ import CoreGraphics
 struct StereoConfig {
     /// Interpupillary distance in meters (typical adult ~0.064 m).
     var ipdMeters: Float = 0.064
+    /// Horizontal split amount for the monocular camera passthrough stereo hack.
+    /// Lower values reduce doubling and 3D pop; higher values exaggerate the effect.
+    var passthroughStereoOffset: CGFloat = 0.03
     /// Near/far planes for per-eye projection.
     var zNear: Float = 0.001
     var zFar:  Float = 100.0

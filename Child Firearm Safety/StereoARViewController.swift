@@ -57,6 +57,13 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Cardboard mask  reticle (UIKit, like ARFun)
     private var maskView: UIView!
     private var reticleView: UIView!
+    private var debugControlsView: UIView!
+    private var stereoOffsetLabel: UILabel!
+    private var stereoOffsetSlider: UISlider!
+    private var leftEyeYOffsetLabel: UILabel!
+    private var leftEyeYOffsetSlider: UISlider!
+    private var rightEyeYOffsetLabel: UILabel!
+    private var rightEyeYOffsetSlider: UISlider!
 
     // Tap gesture for reset
     private var tapGesture: UITapGestureRecognizer!
@@ -70,8 +77,12 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     // Current frame texture (updated each frame, rendered by MTKView)
     private var currentPixelBuffer: CVPixelBuffer?
+    private var currentDisplayToCameraTransform: CGAffineTransform = .identity
     private let frameLock = NSLock()
     private var frameCounter: Int = 0
+    private var lastBaseProjectionTransform: SCNMatrix4?
+    private var leftEyePassthroughYOffset: CGFloat = 0
+    private var rightEyePassthroughYOffset: CGFloat = 0
 
     // Gesture detection (hand pose)
     private let handRequest = VNDetectHumanHandPoseRequest()
@@ -113,7 +124,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Default IPD; can still be overridden via StereoConfig if you want
     private var ipd: Float = 0.064
     // Horizontal offset as percentage of image width for stereo hack
-    private let stereoOffset: CGFloat = 0.08
+    private var stereoOffset: CGFloat = 0.03
     // Screen/viewport parameters for off-axis projection
     private var screenAspect: Float = 16.0 / 9.0
     private let zNear: Float = 0.001
@@ -126,7 +137,9 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var config = StereoConfig() {
         didSet {
             ipd = config.ipdMeters
+            stereoOffset = max(0.0, min(config.passthroughStereoOffset, 0.2))
             zeroParallaxDistance = config.zeroParallaxDistance
+            updateDebugControls()
             updateEyePositions()
         }
     }
@@ -273,8 +286,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         detectionCamera?.camera = SCNCamera()
         detectionCamera?.camera?.wantsHDR = false
         detectionCamera?.camera?.wantsExposureAdaptation = false
-        detectionCamera?.camera?.projectionTransform = createShiftedProjectionMatrix(
-            horizontalShift: 0,  // No shift - matches Vision's full camera view
+        detectionCamera?.camera?.projectionTransform = createManualProjectionMatrix(
+            horizontalShift: 0,
             aspect: screenAspect,
             fovY: Float(eyeFOV),
             near: zNear,
@@ -303,6 +316,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         // Initial reticle drawing
         createReticle()
+
+        setupDebugControls()
 
         // --- Tap gesture for reset ---
         tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
@@ -352,6 +367,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         reticleView.frame = view.bounds
         createReticle()
 
+        layoutDebugControls()
+
         // Update off-axis projection with new aspect ratio
         updateOffAxisProjection()
     }
@@ -366,6 +383,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         frameLock.lock()
         currentPixelBuffer = nil
         currentSegmentationBuffer = nil
+        currentDisplayToCameraTransform = .identity
         frameLock.unlock()
 
         CVMetalTextureCacheFlush(textureCache, 0)
@@ -390,6 +408,22 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         detectionCamera?.simdTransform = frame.camera.transform
 
         // TIMING INSTRUMENTATION - measure lock contention
+        let eyeViewportSize = currentEyeViewportSize()
+        let baseProjection = SCNMatrix4(
+            frame.camera.projectionMatrix(
+                for: .landscapeRight,
+                viewportSize: eyeViewportSize,
+                zNear: CGFloat(zNear),
+                zFar: CGFloat(zFar)
+            )
+        )
+        let displayToCameraTransform = frame.displayTransform(
+            for: .landscapeRight,
+            viewportSize: eyeViewportSize
+        ).inverted()
+        lastBaseProjectionTransform = baseProjection
+        applyProjectionTransforms(baseProjection)
+
         let lockStart = CACurrentMediaTime()
         frameLock.lock()
         let lockWaitMs = Int((CACurrentMediaTime() - lockStart) * 1000)
@@ -398,6 +432,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         }
         currentPixelBuffer = frame.capturedImage
         currentSegmentationBuffer = frame.segmentationBuffer
+        currentDisplayToCameraTransform = displayToCameraTransform
         frameLock.unlock()
 
         if testingRoomId != nil {
@@ -924,7 +959,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     ///   - near: Near clipping plane
     ///   - far: Far clipping plane
     /// - Returns: SCNMatrix4 projection matrix
-    private func createShiftedProjectionMatrix(
+    private func createManualProjectionMatrix(
         horizontalShift: Float,
         aspect: Float,
         fovY: Float,
@@ -964,7 +999,29 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         )
     }
 
+    private func currentEyeViewportSize() -> CGSize {
+        CGSize(
+            width: max(view.bounds.width / 2, 1),
+            height: max(view.bounds.height, 1)
+        )
+    }
+
+    private func applyProjectionTransforms(_ baseProjection: SCNMatrix4) {
+        leftEye.camera?.projectionTransform = stereoProjection(from: baseProjection, isLeftEye: true)
+        rightEye.camera?.projectionTransform = stereoProjection(from: baseProjection, isLeftEye: false)
+        detectionCamera?.camera?.projectionTransform = baseProjection
+    }
+
+    private func stereoProjection(from baseProjection: SCNMatrix4, isLeftEye: Bool) -> SCNMatrix4 {
+        baseProjection
+    }
+
     private func updateOffAxisProjection() {
+        if let lastBaseProjectionTransform {
+            applyProjectionTransforms(lastBaseProjectionTransform)
+            return
+        }
+
         // Calculate aspect ratio from the viewport
         let viewWidth = view.bounds.width / 2  // Each eye gets half the screen
         let viewHeight = view.bounds.height
@@ -991,7 +1048,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // Create projection for left eye
         // Camera UVs [0, 0.92]: content shifts LEFT on screen (right side cropped)
         // To match: 3D projection must shift LEFT on screen -> negative shift
-        let leftProjection = createShiftedProjectionMatrix(
+        let leftProjection = createManualProjectionMatrix(
             horizontalShift: -effectiveOffset / 2.0,
             aspect: screenAspect,
             fovY: Float(eyeFOV),
@@ -1002,7 +1059,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // Create projection for right eye  
         // Camera UVs [0.08, 1.0]: content shifts RIGHT on screen (left side cropped)
         // To match: 3D projection must shift RIGHT on screen -> positive shift
-        let rightProjection = createShiftedProjectionMatrix(
+        let rightProjection = createManualProjectionMatrix(
             horizontalShift: effectiveOffset / 2.0,
             aspect: screenAspect,
             fovY: Float(eyeFOV),
@@ -1015,7 +1072,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         rightEye.camera?.projectionTransform = rightProjection
         
         // Update detection camera with un-shifted projection (for Vision coordinate matching)
-        detectionCamera?.camera?.projectionTransform = createShiftedProjectionMatrix(
+        detectionCamera?.camera?.projectionTransform = createManualProjectionMatrix(
             horizontalShift: 0,  // No shift - matches Vision's full camera view
             aspect: screenAspect,
             fovY: Float(eyeFOV),
@@ -1107,6 +1164,83 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         reticleView.layer.addSublayer(rightDot)
     }
 
+    private func setupDebugControls() {
+        debugControlsView = UIView()
+        debugControlsView.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        debugControlsView.layer.cornerRadius = 12
+        debugControlsView.layer.masksToBounds = true
+        view.addSubview(debugControlsView)
+
+        stereoOffsetLabel = UILabel()
+        stereoOffsetLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        stereoOffsetLabel.textColor = .white
+        stereoOffsetLabel.numberOfLines = 2
+        debugControlsView.addSubview(stereoOffsetLabel)
+
+        stereoOffsetSlider = UISlider()
+        stereoOffsetSlider.minimumValue = 0.0
+        stereoOffsetSlider.maximumValue = 0.08
+        stereoOffsetSlider.addTarget(self, action: #selector(handleStereoOffsetSliderChanged(_:)), for: .valueChanged)
+        debugControlsView.addSubview(stereoOffsetSlider)
+
+        leftEyeYOffsetLabel = UILabel()
+        leftEyeYOffsetLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        leftEyeYOffsetLabel.textColor = .white
+        debugControlsView.addSubview(leftEyeYOffsetLabel)
+
+        leftEyeYOffsetSlider = UISlider()
+        leftEyeYOffsetSlider.minimumValue = -0.08
+        leftEyeYOffsetSlider.maximumValue = 0.08
+        leftEyeYOffsetSlider.addTarget(self, action: #selector(handleLeftEyeYOffsetSliderChanged(_:)), for: .valueChanged)
+        debugControlsView.addSubview(leftEyeYOffsetSlider)
+
+        rightEyeYOffsetLabel = UILabel()
+        rightEyeYOffsetLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        rightEyeYOffsetLabel.textColor = .white
+        debugControlsView.addSubview(rightEyeYOffsetLabel)
+
+        rightEyeYOffsetSlider = UISlider()
+        rightEyeYOffsetSlider.minimumValue = -0.08
+        rightEyeYOffsetSlider.maximumValue = 0.08
+        rightEyeYOffsetSlider.addTarget(self, action: #selector(handleRightEyeYOffsetSliderChanged(_:)), for: .valueChanged)
+        debugControlsView.addSubview(rightEyeYOffsetSlider)
+
+        updateDebugControls()
+    }
+
+    private func layoutDebugControls() {
+        let panelWidth: CGFloat = min(260, view.bounds.width - 32)
+        let panelHeight: CGFloat = 176
+        debugControlsView.frame = CGRect(x: 16, y: 16, width: panelWidth, height: panelHeight)
+        stereoOffsetLabel.frame = CGRect(x: 12, y: 10, width: panelWidth - 24, height: 28)
+        stereoOffsetSlider.frame = CGRect(x: 12, y: 38, width: panelWidth - 24, height: 28)
+        leftEyeYOffsetLabel.frame = CGRect(x: 12, y: 72, width: panelWidth - 24, height: 20)
+        leftEyeYOffsetSlider.frame = CGRect(x: 12, y: 94, width: panelWidth - 24, height: 24)
+        rightEyeYOffsetLabel.frame = CGRect(x: 12, y: 122, width: panelWidth - 24, height: 20)
+        rightEyeYOffsetSlider.frame = CGRect(x: 12, y: 144, width: panelWidth - 24, height: 24)
+    }
+
+    private func updateDebugControls() {
+        stereoOffsetLabel?.text = String(format: "Stereo Crop\n%.3f", stereoOffset)
+        stereoOffsetSlider?.value = Float(stereoOffset)
+        leftEyeYOffsetLabel?.text = String(format: "Left Y Offset  %.3f", leftEyePassthroughYOffset)
+        leftEyeYOffsetSlider?.value = Float(leftEyePassthroughYOffset)
+        rightEyeYOffsetLabel?.text = String(format: "Right Y Offset %.3f", rightEyePassthroughYOffset)
+        rightEyeYOffsetSlider?.value = Float(rightEyePassthroughYOffset)
+    }
+
+    @objc private func handleStereoOffsetSliderChanged(_ sender: UISlider) {
+        setPassthroughStereoOffset(CGFloat(sender.value))
+    }
+
+    @objc private func handleLeftEyeYOffsetSliderChanged(_ sender: UISlider) {
+        setPassthroughEyeYOffset(CGFloat(sender.value), isLeftEye: true)
+    }
+
+    @objc private func handleRightEyeYOffsetSliderChanged(_ sender: UISlider) {
+        setPassthroughEyeYOffset(CGFloat(sender.value), isLeftEye: false)
+    }
+
     private func createCardboardMask() {
         let width = view.bounds.width / 2
         let height = view.bounds.height
@@ -1155,6 +1289,27 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     func apply(config newConfig: StereoConfig) {
         config = newConfig
+    }
+
+    /// Adjust the passthrough crop used for the camera stereo split at runtime.
+    /// Lower values reduce doubling; zero disables the fake stereo crop.
+    func setPassthroughStereoOffset(_ offset: CGFloat) {
+        stereoOffset = max(0.0, min(offset, 0.2))
+        updateDebugControls()
+    }
+
+    var currentPassthroughStereoOffset: CGFloat {
+        stereoOffset
+    }
+
+    func setPassthroughEyeYOffset(_ offset: CGFloat, isLeftEye: Bool) {
+        let clamped = max(-0.1, min(offset, 0.1))
+        if isLeftEye {
+            leftEyePassthroughYOffset = clamped
+        } else {
+            rightEyePassthroughYOffset = clamped
+        }
+        updateDebugControls()
     }
 
     /// Adjust the zero parallax distance at runtime.
@@ -1755,6 +1910,42 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         return CVMetalTextureGetTexture(textureRef)
     }
+
+    private func makeStereoVertices(
+        displayToCameraTransform: CGAffineTransform,
+        isLeftEye: Bool
+    ) -> [Float] {
+        let stereoOffsetValue = Float(stereoOffset)
+        let cropScaleX = 1.0 - stereoOffsetValue
+        let cropTranslateX = isLeftEye ? 0.0 : stereoOffsetValue
+        let eyeYOffset = isLeftEye ? leftEyePassthroughYOffset : rightEyePassthroughYOffset
+
+        let normalizedViewPoints: [(position: SIMD2<Float>, uv: CGPoint)] = [
+            (SIMD2(-1.0, -1.0), CGPoint(x: 0.0, y: 1.0)),
+            (SIMD2(1.0, -1.0), CGPoint(x: 1.0, y: 1.0)),
+            (SIMD2(-1.0, 1.0), CGPoint(x: 0.0, y: 0.0)),
+            (SIMD2(1.0, 1.0), CGPoint(x: 1.0, y: 0.0))
+        ]
+
+        func clampUV(_ value: CGFloat) -> Float {
+            Float(min(max(value, 0.0), 1.0))
+        }
+
+        return normalizedViewPoints.flatMap { vertex in
+            let cameraUV = vertex.uv.applying(displayToCameraTransform)
+            let stereoUV = CGPoint(
+                x: cameraUV.x * CGFloat(cropScaleX) + CGFloat(cropTranslateX),
+                y: cameraUV.y + eyeYOffset
+            )
+
+            return [
+                vertex.position.x,
+                vertex.position.y,
+                clampUV(stereoUV.x),
+                clampUV(stereoUV.y)
+            ]
+        }
+    }
 }
 
 // MARK: - MTKViewDelegate
@@ -1785,6 +1976,7 @@ extension StereoARViewController: MTKViewDelegate {
             frameLock.unlock()
             return
         }
+        let displayToCameraTransform = currentDisplayToCameraTransform
         frameLock.unlock()
         if lockWaitMs > 1 {
             print("⚠️ [Stereo-Metal] Lock wait: \(lockWaitMs)ms")
@@ -1804,7 +1996,6 @@ extension StereoARViewController: MTKViewDelegate {
 
         // Determine if this is left or right eye
         let isLeftEye = (view === leftMetalView)
-        let stereoOffsetValue = Float(stereoOffset)
 
         // Add completion handler to flush texture cache periodically (only for left eye to avoid redundant flushes)
         if isLeftEye {
@@ -1817,16 +2008,10 @@ extension StereoARViewController: MTKViewDelegate {
             }
         }
 
-        // Create vertex data for a full-screen quad with stereo offset
-        let leftOffset: Float = isLeftEye ? 0.0 : stereoOffsetValue
-        let rightOffset: Float = isLeftEye ? stereoOffsetValue : 0.0
-
-        let vertices: [Float] = [
-            -1.0, -1.0,      leftOffset, 1.0,
-             1.0, -1.0,      1.0 - rightOffset, 1.0,
-            -1.0,  1.0,      leftOffset, 0.0,
-             1.0,  1.0,      1.0 - rightOffset, 0.0,
-        ]
+        let vertices = makeStereoVertices(
+            displayToCameraTransform: displayToCameraTransform,
+            isLeftEye: isLeftEye
+        )
 
         guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
             return
@@ -1854,6 +2039,7 @@ extension StereoARViewController: MTKViewDelegate {
             frameLock.unlock()
             return
         }
+        let displayToCameraTransform = currentDisplayToCameraTransform
         frameLock.unlock()
         if lockWaitMs > 1 {
             print("⚠️ [Stereo-Occlusion] Lock wait: \(lockWaitMs)ms")
@@ -1876,20 +2062,11 @@ extension StereoARViewController: MTKViewDelegate {
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
 
-            // Determine if this is left or right eye
-            let isLeftEye = (view === leftOcclusionView)
-            let stereoOffsetValue = Float(stereoOffset)
-
-        // Same stereo offset as passthrough
-        let leftOffset: Float = isLeftEye ? 0.0 : stereoOffsetValue
-        let rightOffset: Float = isLeftEye ? stereoOffsetValue : 0.0
-
-        let vertices: [Float] = [
-            -1.0, -1.0,      leftOffset, 1.0,
-             1.0, -1.0,      1.0 - rightOffset, 1.0,
-            -1.0,  1.0,      leftOffset, 0.0,
-             1.0,  1.0,      1.0 - rightOffset, 0.0,
-        ]
+        let isLeftEye = (view === leftOcclusionView)
+        let vertices = makeStereoVertices(
+            displayToCameraTransform: displayToCameraTransform,
+            isLeftEye: isLeftEye
+        )
 
         guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
             return
