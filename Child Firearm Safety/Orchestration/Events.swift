@@ -11,7 +11,7 @@ import Foundation
 // === Cross-layer events ===
 enum SessionPhase {
     case verbalRecitation                                                                           // Phase 1: child recites rules before AR encounter
-    case onboarding, exploration, encounterPending, praisePath, coachingPath, resetLoop, reflection, completed, wrapup
+    case onboarding, awaitingActOutStart, exploration, encounterPending, praisePath, resetLoop, completed, wrapup
     case tellAdultPrompt                                                                            // Post-runaway: child says tell-adult phrase
 }
 
@@ -23,6 +23,8 @@ enum AREvent {
     case childRunsAway(delta: Float, duration: TimeInterval)  // Faster/further retreat than backing away
     case mappingProgress(percent: Float)
     case userTappedToReset  // User tapped screen to confirm they're back at starting position
+    case userTappedToBeginActOut  // User tapped screen at the start marker to begin Phase 2
+    case childAtStartMarker  // Child walked to the red X floor marker
 }
 
 enum VCIntent {
@@ -30,50 +32,24 @@ enum VCIntent {
     case askedWhatIsThat(text: String, conf: Float)
     case askedIsThatReal(text: String, conf: Float)
     case generalQuestion(text: String)
-    // Verbal explanations of safety rules during reflection
-    case explainedStop(text: String, conf: Float)
-    case explainedDontTouch(text: String, conf: Float)
-    case explainedRunAway(text: String, conf: Float)
-    case explainedTellAdult(text: String, conf: Float)
 }
 
 // High-level dialogue commands the coach can speak
 enum DialogueIntent {
     case coverStoryIntro
-    case neutralExplorationPrompt(area: String?)           // "desk", "window", ...
     case praiseBackedAway
     case praiseRanAway                                      // Enthusiastic praise for running away
     case coachDontTouchWhy
     case instructReset
+    case resetVerbalRecitation                              // After reset during Phase 1, ask child to repeat the 4 steps
     case postResetEncouragement                             // After user taps to reset
     case answerWhatIsThat_safety
     case answerIsThatReal_safety
-    case reflectionQ1
     case trainingComplete                                   // All safety behaviors demonstrated
     case transitionToActOut                                 // Inject Phase 2 context after verbal phase
-    case promptTellAdultPhrase                              // After running away, ask child to say tell-adult phrase
-}
-
-// === Safety behavior tracking for completion ===
-struct SafetyBehaviorTracker {
-    var explainedStop: Bool = false           // Verbally explained "stop"
-    var explainedDontTouch: Bool = false      // Verbally explained "don't touch"
-    var ranAwayPhysically: Bool = false       // Physically ran/backed away
-    var explainedRunAway: Bool = false        // Verbally explained "run away"
-    var explainedTellAdult: Bool = false      // Verbally explained "tell adult"
-
-    // Run away can be physical OR verbal
-    var runAwayComplete: Bool {
-        ranAwayPhysically || explainedRunAway
-    }
-
-    var allBehaviorsComplete: Bool {
-        explainedStop && explainedDontTouch && runAwayComplete && explainedTellAdult
-    }
-
-    var completedCount: Int {
-        [explainedStop, explainedDontTouch, runAwayComplete, explainedTellAdult].filter { $0 }.count
-    }
+    case beginActOutScenario                                // Spoken kickoff after the child taps to begin Phase 2
+    case promptTellAdultPhrase                              // After running away, LLM prompts child to say tell-adult phrase
+    case childCalledAdultSpontaneously(text: String)        // Child called adult unprompted during silent window
 }
 
 // === Notification names (quick bus you already use) ===
@@ -95,6 +71,12 @@ extension Notification.Name {
 
     // Orchestrator → VoiceCoach
     static let vcCommand = Notification.Name("vcCommand")
+
+    // Setup: place/clear start marker at device feet
+    static let placeStartMarker = Notification.Name("placeStartMarker")
+    static let clearStartMarker = Notification.Name("clearStartMarker")
+    // Setup: world mapping status changed (userInfo key: "isReady" Bool)
+    static let mappingStatusChanged = Notification.Name("mappingStatusChanged")
 
     // Training session completion
     static let verbalPhaseComplete = Notification.Name("verbalPhaseComplete")

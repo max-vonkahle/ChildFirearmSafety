@@ -57,23 +57,21 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Cardboard mask  reticle (UIKit, like ARFun)
     private var maskView: UIView!
     private var reticleView: UIView!
-    private var debugControlsView: UIView!
-    private var stereoOffsetLabel: UILabel!
-    private var stereoOffsetSlider: UISlider!
-    private var leftEyeYOffsetLabel: UILabel!
-    private var leftEyeYOffsetSlider: UISlider!
-    private var rightEyeYOffsetLabel: UILabel!
-    private var rightEyeYOffsetSlider: UISlider!
 
     // Tap gesture for reset
     private var tapGesture: UITapGestureRecognizer!
     private var isWaitingForResetSpeech: Bool = false
+    private var isWaitingForStartMarker: Bool = false  // Tap blocked until child walks to red X
+    private var isWaitingForActOutStart: Bool = false
+    private var isEncounterDetectionEnabled: Bool = false
 
     // Occlusion overlay views (renders camera where person is detected, on top of 3D)
     private var leftOcclusionView: MTKView!
     private var rightOcclusionView: MTKView!
     private var occlusionPipelineState: MTLRenderPipelineState!
     private var currentSegmentationBuffer: CVPixelBuffer?
+    private var currentDepthBuffer: CVPixelBuffer?
+    private var currentGunDepth: Float = 0.0
 
     // Current frame texture (updated each frame, rendered by MTKView)
     private var currentPixelBuffer: CVPixelBuffer?
@@ -108,6 +106,11 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var retreatStartDistance: Float = 0
     private var retreatStartTime: CFTimeInterval = 0
 
+    // Start position floor marker
+    private var startMarkerNode: SCNNode?
+    private var startMarkerWorldPosition: SIMD3<Float>?
+    private let markerReachDistance: Float = 0.5
+
     // Tuning knobs (matching ARCoordinator)
     private let pixelPadding: CGFloat = 24
     private let depthMargin: Float = 0.07
@@ -124,7 +127,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Default IPD; can still be overridden via StereoConfig if you want
     private var ipd: Float = 0.064
     // Horizontal offset as percentage of image width for stereo hack
-    private var stereoOffset: CGFloat = 0.08
+    private var stereoOffset: CGFloat = 0.03
     // Screen/viewport parameters for off-axis projection
     private var screenAspect: Float = 16.0 / 9.0
     private let zNear: Float = 0.001
@@ -139,7 +142,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             ipd = config.ipdMeters
             stereoOffset = max(0.0, min(config.passthroughStereoOffset, 0.2))
             zeroParallaxDistance = config.zeroParallaxDistance
-            updateDebugControls()
             updateEyePositions()
         }
     }
@@ -317,7 +319,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // Initial reticle drawing
         createReticle()
 
-        setupDebugControls()
 
         // --- Tap gesture for reset ---
         tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
@@ -367,7 +368,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         reticleView.frame = view.bounds
         createReticle()
 
-        layoutDebugControls()
 
         // Update off-axis projection with new aspect ratio
         updateOffAxisProjection()
@@ -383,6 +383,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         frameLock.lock()
         currentPixelBuffer = nil
         currentSegmentationBuffer = nil
+        currentDepthBuffer = nil
+        currentGunDepth = 0.0
         currentDisplayToCameraTransform = .identity
         frameLock.unlock()
 
@@ -432,6 +434,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         }
         currentPixelBuffer = frame.capturedImage
         currentSegmentationBuffer = frame.segmentationBuffer
+        currentDepthBuffer = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap
+        currentGunDepth = gunDepthFromCamera(frame: frame) ?? 0.0
         currentDisplayToCameraTransform = displayToCameraTransform
         frameLock.unlock()
 
@@ -453,17 +457,33 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         // Testing: wait for relocalization before placing assets
         if testingRoomId != nil && !testingAssetsPlaced {
+            let mappingReady: Bool
             switch frame.worldMappingStatus {
             case .mapped, .extending:
+                mappingReady = true
+            default:
+                mappingReady = false
+            }
+
+            let alignmentReady: Bool
+            if let testingStartCameraTransform {
+                let status = RoomLibrary.startAlignmentStatus(
+                    currentCameraTransform: frame.camera.transform,
+                    targetStartTransform: testingStartCameraTransform
+                )
+                alignmentReady = status.isAligned
+            } else {
+                alignmentReady = true
+            }
+
+            if mappingReady && alignmentReady {
                 testingAssetsPlaced = true
                 relocalizationTimer?.invalidate()
-                // print("✅ Testing world map relocalized - placing assets")
+                print("✅ [Stereo] Testing relocalized and aligned — placing assets")
                 DispatchQueue.main.async { [weak self] in
                     self?.placeTestingAssets()
                     self?.onTestingSceneReady?()
                 }
-            default:
-                break
             }
         }
 
@@ -484,6 +504,22 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             // Parse asset type from anchor name (e.g., "placedAsset_gun" -> "gun")
             let components = anchor.name?.split(separator: "_") ?? []
             let assetName = components.count > 1 ? String(components[1]) : "gun"
+
+            // Restore start marker (programmatic geometry, not a USDZ model)
+            if assetName == "startMarker" {
+                let markerNode = makeStartMarkerNode()
+                let containerNode = SCNNode()
+                containerNode.simdTransform = anchor.transform
+                containerNode.addChildNode(markerNode)
+                containerNode.isHidden = true  // Hidden by default; shown by AR command
+                scene.rootNode.addChildNode(containerNode)
+                startMarkerNode = containerNode
+                let col = anchor.transform.columns.3
+                startMarkerWorldPosition = SIMD3<Float>(col.x, col.y, col.z)
+                print("📍 [Stereo] Start marker restored — hidden until act-out begins")
+                restoredAnyAsset = true
+                continue
+            }
 
             // print("Found saved \(assetName) anchor in stereo mode, restoring model...")
 
@@ -527,6 +563,33 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         }
     }
 
+    // MARK: - Start Marker
+
+    private func makeStartMarkerNode() -> SCNNode {
+        let container = SCNNode()
+
+        // Flat red disk
+        let disk = SCNCylinder(radius: 0.3, height: 0.005)
+        disk.firstMaterial?.diffuse.contents = UIColor.systemRed.withAlphaComponent(0.85)
+        disk.firstMaterial?.lightingModel = .constant  // Unlit so it's always visible
+        let diskNode = SCNNode(geometry: disk)
+        container.addChildNode(diskNode)
+
+        // White X — two crossed bars on top of the disk
+        let bar = SCNBox(width: 0.5, height: 0.01, length: 0.07, chamferRadius: 0)
+        bar.firstMaterial?.diffuse.contents = UIColor.white.withAlphaComponent(0.9)
+        bar.firstMaterial?.lightingModel = .constant
+        let bar1Node = SCNNode(geometry: bar)
+        bar1Node.position = SCNVector3(0, 0.007, 0)
+        let bar2Node = SCNNode(geometry: bar)
+        bar2Node.position = SCNVector3(0, 0.007, 0)
+        bar2Node.eulerAngles = SCNVector3(0, Float.pi / 2, 0)
+        container.addChildNode(bar1Node)
+        container.addChildNode(bar2Node)
+
+        return container
+    }
+
     // MARK: - Gun Model and World Map Loading
 
     private func setupSceneLighting() {
@@ -568,8 +631,9 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             // Rotate to lay flat (match ARCoordinator's layFlat)
             if assetName == "gun" {
                 // Gun needs Z-axis rotation to lay flat (match ARCoordinator line 418)
-                let rotation = SCNMatrix4MakeRotation(.pi / 2, 0, 0, 1)
-                modelNode.transform = SCNMatrix4Mult(rotation, modelNode.transform)
+                let layFlatRotation = SCNMatrix4MakeRotation(.pi / 2, 0, 0, 1)
+                let faceAwayRotation = SCNMatrix4MakeRotation(.pi, 0, 1, 0)
+                modelNode.transform = SCNMatrix4Mult(faceAwayRotation, SCNMatrix4Mult(layFlatRotation, modelNode.transform))
             } else if assetName == "table" {
                 // Table needs X-axis rotation to lay flat
                 let rotation = SCNMatrix4MakeRotation(-.pi / 2, 1, 0, 0)
@@ -637,21 +701,91 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             isWaitingForResetSpeech = true
         } else if command == "enableTapAfterSpeech" {
             isWaitingForResetSpeech = false
+        } else if command == "prepareActOutStart" {
+            print("📍 [Stereo] prepareActOutStart received")
+            startMarkerNode?.isHidden = false
+            isWaitingForActOutStart = true
+            isWaitingForStartMarker = true
+            isEncounterDetectionEnabled = false
+            wasNear = false
+            isRetreating = false
+            if startMarkerNode == nil {
+                print("⚠️ [Stereo] prepareActOutStart called but no start marker is loaded")
+            } else {
+                print("📍 [Stereo] Start marker shown — act-out start is blocked until child reaches marker and taps")
+            }
+        } else if command == "showStartMarker" {
+            startMarkerNode?.isHidden = false
+            // If gun is hidden (reset scenario), block tap until child walks to the marker
+            if warningShown {
+                isWaitingForStartMarker = true
+                print("📍 [Stereo] Start marker shown — tap blocked until child reaches marker")
+            } else {
+                print("📍 [Stereo] Start marker shown (act-out start)")
+            }
+        } else if command == "hideStartMarker" {
+            startMarkerNode?.isHidden = true
+            isWaitingForStartMarker = false
+            isWaitingForActOutStart = false
         }
     }
 
     @objc private func handleTap(_ sender: UITapGestureRecognizer) {
+        if isWaitingForActOutStart {
+            if isWaitingForResetSpeech {
+                print("⏭️ [Stereo] Tap ignored - waiting for model to finish act-out instructions")
+                return
+            }
+            if isWaitingForStartMarker {
+                if let markerPos = startMarkerWorldPosition,
+                   let frame = session.currentFrame {
+                    let cam = frame.camera.transform.columns.3
+                    let dx = cam.x - markerPos.x
+                    let dz = cam.z - markerPos.z
+                    let dist = sqrtf(dx * dx + dz * dz)
+                    print("⏭️ [Stereo] Tap ignored - \(String(format: "%.2f", dist))m from marker (need ≤\(markerReachDistance)m)")
+                } else {
+                    print("⏭️ [Stereo] Tap ignored - child hasn't reached the start marker yet (position unavailable)")
+                }
+                return
+            }
+
+            print("✅ [Stereo] User tapped to begin act-out - posting userTappedToBeginActOut event")
+            isWaitingForActOutStart = false
+            isEncounterDetectionEnabled = true
+            wasNear = false
+            isRetreating = false
+            startMarkerNode?.isHidden = true
+            NotificationCenter.default.post(name: arEventNotification, object: nil,
+                userInfo: [BusKey.arevent: AREvent.userTappedToBeginActOut])
+            return
+        }
+
         // If gun is hidden (warningShown), user is tapping to confirm reset
         if warningShown {
-            // Check if we're still waiting for reset instruction speech to complete
             if isWaitingForResetSpeech {
                 print("⏭️ [Stereo] Tap ignored - waiting for model to finish speaking")
                 return
             }
+            if isWaitingForStartMarker {
+                if let markerPos = startMarkerWorldPosition,
+                   let frame = session.currentFrame {
+                    let cam = frame.camera.transform.columns.3
+                    let dx = cam.x - markerPos.x
+                    let dz = cam.z - markerPos.z
+                    let dist = sqrtf(dx * dx + dz * dz)
+                    print("⏭️ [Stereo] Tap ignored - \(String(format: "%.2f", dist))m from marker (need ≤\(markerReachDistance)m)")
+                } else {
+                    print("⏭️ [Stereo] Tap ignored - child hasn't reached the start marker yet (position unavailable)")
+                }
+                return
+            }
 
             print("✅ [Stereo] User tapped to confirm reset - posting userTappedToReset event")
+            startMarkerNode?.isHidden = true
             NotificationCenter.default.post(name: arEventNotification, object: nil,
                 userInfo: [BusKey.arevent: AREvent.userTappedToReset])
+            return
         }
     }
 
@@ -815,15 +949,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
         // print("✅ Testing AR session started with world map (\(roomData.worldMap.anchors.count) anchors)")
-
-        // Fallback: place assets after 10s even if not fully relocalized
-        relocalizationTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
-            guard let self = self, !self.testingAssetsPlaced else { return }
-            // print("⏱️ Testing relocalization timeout - placing assets anyway")
-            self.testingAssetsPlaced = true
-            self.placeTestingAssets()
-            self.onTestingSceneReady?()
-        }
     }
 
     func updateTestingStage(_ stage: TestingStage) {
@@ -1167,82 +1292,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         reticleView.layer.addSublayer(rightDot)
     }
 
-    private func setupDebugControls() {
-        debugControlsView = UIView()
-        debugControlsView.backgroundColor = UIColor.black.withAlphaComponent(0.6)
-        debugControlsView.layer.cornerRadius = 12
-        debugControlsView.layer.masksToBounds = true
-        view.addSubview(debugControlsView)
-
-        stereoOffsetLabel = UILabel()
-        stereoOffsetLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        stereoOffsetLabel.textColor = .white
-        stereoOffsetLabel.numberOfLines = 2
-        debugControlsView.addSubview(stereoOffsetLabel)
-
-        stereoOffsetSlider = UISlider()
-        stereoOffsetSlider.minimumValue = 0.0
-        stereoOffsetSlider.maximumValue = 0.08
-        stereoOffsetSlider.addTarget(self, action: #selector(handleStereoOffsetSliderChanged(_:)), for: .valueChanged)
-        debugControlsView.addSubview(stereoOffsetSlider)
-
-        leftEyeYOffsetLabel = UILabel()
-        leftEyeYOffsetLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        leftEyeYOffsetLabel.textColor = .white
-        debugControlsView.addSubview(leftEyeYOffsetLabel)
-
-        leftEyeYOffsetSlider = UISlider()
-        leftEyeYOffsetSlider.minimumValue = -0.08
-        leftEyeYOffsetSlider.maximumValue = 0.08
-        leftEyeYOffsetSlider.addTarget(self, action: #selector(handleLeftEyeYOffsetSliderChanged(_:)), for: .valueChanged)
-        debugControlsView.addSubview(leftEyeYOffsetSlider)
-
-        rightEyeYOffsetLabel = UILabel()
-        rightEyeYOffsetLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        rightEyeYOffsetLabel.textColor = .white
-        debugControlsView.addSubview(rightEyeYOffsetLabel)
-
-        rightEyeYOffsetSlider = UISlider()
-        rightEyeYOffsetSlider.minimumValue = -0.08
-        rightEyeYOffsetSlider.maximumValue = 0.08
-        rightEyeYOffsetSlider.addTarget(self, action: #selector(handleRightEyeYOffsetSliderChanged(_:)), for: .valueChanged)
-        debugControlsView.addSubview(rightEyeYOffsetSlider)
-
-        updateDebugControls()
-    }
-
-    private func layoutDebugControls() {
-        let panelWidth: CGFloat = min(260, view.bounds.width - 32)
-        let panelHeight: CGFloat = 176
-        debugControlsView.frame = CGRect(x: 16, y: 16, width: panelWidth, height: panelHeight)
-        stereoOffsetLabel.frame = CGRect(x: 12, y: 10, width: panelWidth - 24, height: 28)
-        stereoOffsetSlider.frame = CGRect(x: 12, y: 38, width: panelWidth - 24, height: 28)
-        leftEyeYOffsetLabel.frame = CGRect(x: 12, y: 72, width: panelWidth - 24, height: 20)
-        leftEyeYOffsetSlider.frame = CGRect(x: 12, y: 94, width: panelWidth - 24, height: 24)
-        rightEyeYOffsetLabel.frame = CGRect(x: 12, y: 122, width: panelWidth - 24, height: 20)
-        rightEyeYOffsetSlider.frame = CGRect(x: 12, y: 144, width: panelWidth - 24, height: 24)
-    }
-
-    private func updateDebugControls() {
-        stereoOffsetLabel?.text = String(format: "Stereo Crop\n%.3f", stereoOffset)
-        stereoOffsetSlider?.value = Float(stereoOffset)
-        leftEyeYOffsetLabel?.text = String(format: "Left Y Offset  %.3f", leftEyePassthroughYOffset)
-        leftEyeYOffsetSlider?.value = Float(leftEyePassthroughYOffset)
-        rightEyeYOffsetLabel?.text = String(format: "Right Y Offset %.3f", rightEyePassthroughYOffset)
-        rightEyeYOffsetSlider?.value = Float(rightEyePassthroughYOffset)
-    }
-
-    @objc private func handleStereoOffsetSliderChanged(_ sender: UISlider) {
-        setPassthroughStereoOffset(CGFloat(sender.value))
-    }
-
-    @objc private func handleLeftEyeYOffsetSliderChanged(_ sender: UISlider) {
-        setPassthroughEyeYOffset(CGFloat(sender.value), isLeftEye: true)
-    }
-
-    @objc private func handleRightEyeYOffsetSliderChanged(_ sender: UISlider) {
-        setPassthroughEyeYOffset(CGFloat(sender.value), isLeftEye: false)
-    }
 
     private func createCardboardMask() {
         let width = view.bounds.width / 2
@@ -1298,7 +1347,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     /// Lower values reduce doubling; zero disables the fake stereo crop.
     func setPassthroughStereoOffset(_ offset: CGFloat) {
         stereoOffset = max(0.0, min(offset, 0.2))
-        updateDebugControls()
     }
 
     var currentPassthroughStereoOffset: CGFloat {
@@ -1312,7 +1360,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         } else {
             rightEyePassthroughYOffset = clamped
         }
-        updateDebugControls()
     }
 
     /// Adjust the zero parallax distance at runtime.
@@ -1369,7 +1416,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         autoreleasepool {
             // Proximity & retreat detection
-            if let d = gunDistanceFromCamera(frame: frame) {
+            if isEncounterDetectionEnabled, let d = gunDistanceFromCamera(frame: frame) {
                 let tNow = t
 
                 // Enter near zone
@@ -1423,6 +1470,21 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                         print("📍 [Stereo-Retreat] User returned closer (d=\(String(format: "%.2f", d))m) — resetting retreat timer")
                         isRetreating = false
                     }
+                }
+            }
+
+            // Start marker proximity check — hide marker and fire event when child walks to it
+            if startMarkerNode?.isHidden == false,
+               isWaitingForStartMarker,
+               let markerPos = startMarkerWorldPosition {
+                let cam = frame.camera.transform.columns.3
+                let dx = cam.x - markerPos.x
+                let dz = cam.z - markerPos.z
+                let xzDist = sqrt(dx * dx + dz * dz)
+                if xzDist <= markerReachDistance {
+                    isWaitingForStartMarker = false
+                    NotificationCenter.default.post(name: arEventNotification, object: nil,
+                        userInfo: [BusKey.arevent: AREvent.childAtStartMarker])
                 }
             }
 
@@ -1750,6 +1812,35 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         return distance
     }
 
+    private func gunDepthFromCamera(frame: ARFrame) -> Float? {
+        guard let gunNode = gunNode else { return nil }
+        let gunWorld = gunNode.simdWorldPosition
+        let rel = frame.camera.transform.inverse * SIMD4<Float>(gunWorld.x, gunWorld.y, gunWorld.z, 1)
+        let depth = -rel.z  // ARKit camera space: -Z is forward
+        return depth > 0 ? depth : nil
+    }
+
+    private func createDepthTexture(from pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        var textureRef: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            nil, textureCache, pixelBuffer, nil,
+            .r32Float, width, height, 0, &textureRef
+        )
+        guard status == kCVReturnSuccess, let textureRef else { return nil }
+        return CVMetalTextureGetTexture(textureRef)
+    }
+
+    private func makeFallbackDepthTexture() -> MTLTexture? {
+        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: 1, height: 1, mipmapped: false)
+        desc.usage = .shaderRead
+        let tex = metalDevice.makeTexture(descriptor: desc)
+        var zero: Float = 0.0
+        tex?.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: &zero, bytesPerRow: 4)
+        return tex
+    }
+
     private func visionNormToScreen(_ loc: CGPoint) -> CGPoint? {
         // Vision coordinates are normalized [0,1] with origin at bottom-left
         // Since we now use un-shifted projection for gun rect calculation,
@@ -2043,6 +2134,8 @@ extension StereoARViewController: MTKViewDelegate {
             return
         }
         let displayToCameraTransform = currentDisplayToCameraTransform
+        let depthBuffer = currentDepthBuffer
+        var gunDepth = currentGunDepth
         frameLock.unlock()
         if lockWaitMs > 1 {
             print("⚠️ [Stereo-Occlusion] Lock wait: \(lockWaitMs)ms")
@@ -2054,6 +2147,8 @@ extension StereoARViewController: MTKViewDelegate {
               let segmentationTexture = createSinglePlaneTexture(from: segmentationBuffer) else {
             return
         }
+        let depthTexture = depthBuffer.flatMap { createDepthTexture(from: $0) }
+            ?? makeFallbackDepthTexture()
 
         guard let drawable = view.currentDrawable,
               let renderPassDescriptor = view.currentRenderPassDescriptor,
@@ -2080,6 +2175,8 @@ extension StereoARViewController: MTKViewDelegate {
         renderEncoder.setFragmentTexture(yTexture, index: 0)
         renderEncoder.setFragmentTexture(cbcrTexture, index: 1)
         renderEncoder.setFragmentTexture(segmentationTexture, index: 2)
+        renderEncoder.setFragmentTexture(depthTexture, index: 3)
+        renderEncoder.setFragmentBytes(&gunDepth, length: MemoryLayout<Float>.size, index: 0)
         renderEncoder.setFragmentSamplerState(sampler, index: 0)
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         renderEncoder.endEncoding()

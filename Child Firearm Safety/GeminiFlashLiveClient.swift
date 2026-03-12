@@ -267,7 +267,7 @@ final class GeminiFlashLiveClient {
             description: "Signal the app when the child expresses a specific intent or clearly explains a safety rule.",
             parameters: [
                 "intent": .string(
-                    description: "The detected intent. Must be one of: calledAdult, askedWhatIsThat, askedIsThatReal, generalQuestion, explainedStop, explainedDontTouch, explainedRunAway, explainedTellAdult"
+                    description: "The detected intent. Must be one of: calledAdult, askedWhatIsThat, askedIsThatReal, generalQuestion"
                 ),
             ]
         )
@@ -405,6 +405,7 @@ final class GeminiFlashLiveClient {
             guard let functionCalls = toolCall.functionCalls else { break }
             var responses: [FunctionResponsePart] = []
             for fc in functionCalls {
+                print("🛠 [Live] Tool call received: \(fc.name) args=\(fc.args)")
                 switch fc.name {
                 case "trigger_intent":
                     if case let .string(intentStr) = fc.args["intent"],
@@ -420,6 +421,8 @@ final class GeminiFlashLiveClient {
                     if case let .string(phase) = fc.args["phase"] {
                         print("🛠 [Live] signal_phase_complete → \(phase)")
                         handlers.onPhaseComplete?(phase)
+                    } else {
+                        print("⚠️ [Live] signal_phase_complete missing/invalid phase arg: \(fc.args)")
                     }
                 default:
                     print("⚠️ [Live] Unknown tool call: \(fc.name)")
@@ -487,10 +490,8 @@ final class GeminiFlashLiveClient {
         case "askedWhatIsThat":   return .askedWhatIsThat(text: "", conf: 1.0)
         case "askedIsThatReal":   return .askedIsThatReal(text: "", conf: 1.0)
         case "generalQuestion":   return .generalQuestion(text: "")
-        case "explainedStop":     return .explainedStop(text: "", conf: 1.0)
-        case "explainedDontTouch":return .explainedDontTouch(text: "", conf: 1.0)
-        case "explainedRunAway":  return .explainedRunAway(text: "", conf: 1.0)
-        case "explainedTellAdult":return .explainedTellAdult(text: "", conf: 1.0)
+        case "explainedStop", "explainedDontTouch", "explainedRunAway", "explainedTellAdult":
+            return nil
         default:
             print("⚠️ [Live] Unknown intent from LLM: \(string)")
             return nil

@@ -36,6 +36,9 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var placedAnchors: [AnchorEntity] = []
     private var placedARAnchors: [ARAnchor] = []
     private var savedGunAnchors: [(visual: AnchorEntity, ar: ARAnchor)] = []
+    private var startMarkerAnchor: AnchorEntity? = nil  // Start position floor marker
+    private var startMarkerARAnch: ARAnchor? = nil
+    private var startMarkerWorldPosition: SIMD3<Float>? = nil
     private var currentAsset: String? = nil
     private var hasNotifiedAssetsConfigured = false  // Ensure notification fires only once
 
@@ -54,6 +57,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     // Throttle & reach-once flag
     private var lastDecisionAt: CFTimeInterval = 0
     var warningShown: Bool = false
+    private var lastMappingStatus: ARFrame.WorldMappingStatus = .notAvailable
     private var wasNear: Bool = false
     private var lastNearDistance: Float = 0
     private var lastNearTime: CFTimeInterval = 0
@@ -70,6 +74,9 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     // Reset instruction state
     private var isWaitingForResetSpeech: Bool = false  // Don't allow taps until speech completes
+    private var isWaitingForStartMarker: Bool = false  // Don't allow taps until child walks to red X
+    private var isWaitingForActOutStart: Bool = false  // Phase 2 begins only after marker + tap
+    private var isEncounterDetectionEnabled: Bool = false
 
     // Tuning knobs
     private let pixelPadding: CGFloat = 24        // expands gun rect in screen px
@@ -80,6 +87,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private let runAwayMaxTime: CFTimeInterval = 2.0 // Must do it within 2 seconds
     private let backAwayThreshold: Float = 0.7      // Backing away threshold (existing behavior)
     private let backAwayMaxTime: CFTimeInterval = 3.0 // Backing away time window
+    private let markerReachDistance: Float = 0.5     // Must get within 0.5m of the red marker
 
     // Prevent overlapping frame processing
     private var isProcessingFrame = false
@@ -117,6 +125,24 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             }
             self.loadWorldMap(roomId: effectiveId)
         }
+        // Listen for start marker placement / removal
+        NotificationCenter.default.addObserver(forName: .placeStartMarker, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.placeStartMarkerAtDevicePosition()
+        }
+        NotificationCenter.default.addObserver(forName: .clearStartMarker, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.clearStartMarker()
+        }
+
+        // Clear marker gate when child reaches the start marker
+        NotificationCenter.default.addObserver(forName: .arTrainingEvent, object: nil, queue: .main) { [weak self] note in
+            guard let self,
+                  let e = note.userInfo?[BusKey.arevent] as? AREvent,
+                  case .childAtStartMarker = e else { return }
+            self.isWaitingForStartMarker = false
+        }
+
         // Listen for AR commands (e.g., hide/show gun)
         NotificationCenter.default.addObserver(forName: .arCommand, object: nil, queue: .main) { [weak self] note in
             guard let self = self else { return }
@@ -132,6 +158,24 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             } else if arg == "enableTapAfterSpeech" {
                 // print("🔊 [AR] Enabling tap (model finished speaking)")
                 self.isWaitingForResetSpeech = false
+            } else if arg == "prepareActOutStart" {
+                print("📍 [AR] prepareActOutStart received")
+                self.setStartMarkerVisible(true)
+                self.isWaitingForActOutStart = true
+                self.isWaitingForStartMarker = true
+                self.isEncounterDetectionEnabled = false
+                self.wasNear = false
+                self.isRetreating = false
+            } else if arg == "showStartMarker" {
+                self.setStartMarkerVisible(true)
+                // If gun is hidden (reset scenario), block tap until child walks to marker
+                if self.warningShown {
+                    self.isWaitingForStartMarker = true
+                }
+            } else if arg == "hideStartMarker" {
+                self.setStartMarkerVisible(false)
+                self.isWaitingForStartMarker = false
+                self.isWaitingForActOutStart = false
             }
         }
     }
@@ -193,10 +237,19 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         currentFrameNumber += 1
 
         guard let arView = arView,
-              let frame = arView.session.currentFrame,
-              !placedAnchors.isEmpty,  // Check if any anchors are placed
-              warningShown == false
+              let frame = arView.session.currentFrame
         else { return }
+
+        if startMarkerAnchor?.isEnabled == true,
+           isWaitingForStartMarker,
+           let xzDist = startMarkerDistanceFromCamera(frame: frame),
+           xzDist <= markerReachDistance {
+            isWaitingForStartMarker = false
+            NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
+                userInfo: [BusKey.arevent: AREvent.childAtStartMarker])
+        }
+
+        guard !placedAnchors.isEmpty, warningShown == false else { return }
 
         // Throttle
         let t = CACurrentMediaTime()
@@ -205,7 +258,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
         autoreleasepool {
             // --- Proximity & back-away detection
-            if let d = gunDistanceFromCamera(frame: frame) {
+            if isEncounterDetectionEnabled, let d = gunDistanceFromCamera(frame: frame) {
                 let tNow = t
 
                 // Enter near zone once
@@ -214,6 +267,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                     lastNearDistance = d
                     lastNearTime = tNow
                     isRetreating = false  // Reset retreat tracking
+                    print("📍 [AR-Retreat] Entered near zone at d=\(String(format: "%.2f", d))m — posting gunProximityNear")
                     NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
                         userInfo: [BusKey.arevent: AREvent.gunProximityNear(distance: d)])
                 }
@@ -227,17 +281,19 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                         isRetreating = true
                         retreatStartDistance = d
                         retreatStartTime = tNow
+                        print("📍 [AR-Retreat] Retreat started at d=\(String(format: "%.2f", d))m")
                     }
 
                     if isRetreating {
                         // Measure from when retreat started, not from proximity trigger
                         let retreatElapsed = tNow - retreatStartTime
-                        let retreatDistance = d - retreatStartDistance
+                        let retreatDistance = d - lastNearDistance
 
                         // Check for running away (greater distance, less time)
                         if retreatDistance > runAwayThreshold, retreatElapsed < runAwayMaxTime {
                             wasNear = false
                             isRetreating = false
+                            print("🏃 [AR-Retreat] childRunsAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
                             NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
                                 userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)])
                         }
@@ -245,13 +301,19 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                         else if retreatDistance > backAwayThreshold, retreatElapsed < backAwayMaxTime {
                             wasNear = false
                             isRetreating = false
+                            print("🚶 [AR-Retreat] childBacksAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
                             NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
                                 userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)])
                         }
                     }
 
                     // Update running minimum distance while in near state (for retreat start detection)
+                    let previousNearDistance = lastNearDistance
                     lastNearDistance = min(lastNearDistance, d)
+                    if lastNearDistance < previousNearDistance && isRetreating {
+                        print("📍 [AR-Retreat] User returned closer (d=\(String(format: "%.2f", d))m) — resetting retreat timer")
+                        isRetreating = false
+                    }
                 }
             }
 
@@ -339,22 +401,56 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     // MARK: - Tap gesture handler
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
-        print("👆 [AR] TAP DETECTED - warningShown: \(warningShown), isArmed: \(isArmed), savedGunAnchors: \(savedGunAnchors.count), waitingForSpeech: \(isWaitingForResetSpeech)")
+        print("👆 [AR] TAP DETECTED - warningShown: \(warningShown), waitingForActOutStart: \(isWaitingForActOutStart), isArmed: \(isArmed), savedGunAnchors: \(savedGunAnchors.count), waitingForSpeech: \(isWaitingForResetSpeech)")
 
         guard let arView = arView else {
             print("❌ [AR] No arView, ignoring tap")
             return
         }
 
+        if isWaitingForActOutStart {
+            if isWaitingForResetSpeech {
+                print("⏭️ [AR] Tap ignored - waiting for model to finish act-out instructions")
+                return
+            }
+            if isWaitingForStartMarker {
+                if let frame = arView.session.currentFrame,
+                   let dist = startMarkerDistanceFromCamera(frame: frame) {
+                    print("⏭️ [AR] Tap ignored - \(String(format: "%.2f", dist))m from marker (need ≤\(markerReachDistance)m)")
+                } else {
+                    print("⏭️ [AR] Tap ignored - child hasn't reached the start marker yet (position unavailable)")
+                }
+                return
+            }
+
+            print("✅ [AR] User tapped to begin act-out - posting userTappedToBeginActOut event")
+            isWaitingForActOutStart = false
+            isEncounterDetectionEnabled = true
+            wasNear = false
+            isRetreating = false
+            setStartMarkerVisible(false)
+            NotificationCenter.default.post(name: .arTrainingEvent, object: nil, userInfo: [BusKey.arevent: AREvent.userTappedToBeginActOut])
+            return
+        }
+
         // If gun is hidden (warningShown), user is tapping to confirm reset
         if warningShown {
-            // Check if we're still waiting for reset instruction speech to complete
             if isWaitingForResetSpeech {
                 print("⏭️ [AR] Tap ignored - waiting for model to finish speaking")
                 return
             }
+            if isWaitingForStartMarker {
+                if let frame = arView.session.currentFrame,
+                   let dist = startMarkerDistanceFromCamera(frame: frame) {
+                    print("⏭️ [AR] Tap ignored - \(String(format: "%.2f", dist))m from marker (need ≤\(markerReachDistance)m)")
+                } else {
+                    print("⏭️ [AR] Tap ignored - child hasn't reached the start marker yet (position unavailable)")
+                }
+                return
+            }
 
             print("✅ [AR] User tapped to confirm reset - posting userTappedToReset event")
+            setStartMarkerVisible(false)
             NotificationCenter.default.post(name: .arTrainingEvent, object: nil, userInfo: [BusKey.arevent: AREvent.userTappedToReset])
             return
         }
@@ -449,31 +545,43 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         let status = frame.worldMappingStatus
         print("🗺️ World mapping status: \(status)")
 
-        guard status == .mapped || status == .extending else {
+        guard status == .mapped else {
             print("❌ World map not ready (status: \(status)). Walk around more.")
             showSaveAlert(success: false, message: "Please walk around more to map the environment.\n\nMapping status: \(statusDescription(status))")
             return
         }
 
         print("✅ World mapping status OK, getting world map...")
+        attemptGetWorldMap(roomId: roomId, attemptsLeft: 4)
+    }
+
+    private func attemptGetWorldMap(roomId: String, attemptsLeft: Int) {
+        guard let arView = arView else { return }
         arView.session.getCurrentWorldMap { [weak self] map, error in
+            guard let self else { return }
             if let error = error {
-                print("❌ getCurrentWorldMap error:", error)
-                self?.showSaveAlert(success: false, message: "Failed to get world map: \(error.localizedDescription)")
+                if attemptsLeft > 1 {
+                    print("⚠️ getCurrentWorldMap failed (\(attemptsLeft - 1) attempts left): \(error.localizedDescription) — retrying in 2s")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        self.attemptGetWorldMap(roomId: roomId, attemptsLeft: attemptsLeft - 1)
+                    }
+                } else {
+                    print("❌ getCurrentWorldMap failed after all attempts: \(error.localizedDescription)")
+                    self.showSaveAlert(success: false, message: "Could not capture world map — please keep scanning the area and try again.")
+                }
                 return
             }
             guard let map = map else {
-                print("❌ No world map returned")
-                self?.showSaveAlert(success: false, message: "No world map data available")
+                self.showSaveAlert(success: false, message: "No world map data available")
                 return
             }
             do {
                 try WorldMapStore.save(map, roomId: roomId)
                 print("✅ Saved map for '\(roomId)' (\(map.anchors.count) anchors)")
-                self?.showSaveAlert(success: true, message: "Room '\(roomId)' saved successfully!")
+                self.showSaveAlert(success: true, message: "Room '\(roomId)' saved successfully!")
             } catch {
                 print("❌ Save map failed:", error)
-                self?.showSaveAlert(success: false, message: "Failed to save: \(error.localizedDescription)")
+                self.showSaveAlert(success: false, message: "Failed to save: \(error.localizedDescription)")
             }
         }
     }
@@ -594,6 +702,27 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 continue
             }
 
+            // Restore start marker (programmatic - no USDZ model needed)
+            if asset == "startMarker" {
+                let col = a.transform.columns.3
+                startMarkerWorldPosition = SIMD3<Float>(col.x, col.y, col.z)
+                if startMarkerAnchor != nil {
+                    // Visual was already created by placeStartMarkerAtDevicePosition(); just track the AR anchor
+                    startMarkerARAnch = a
+                    print("📍 [AR] Start marker AR anchor registered (visual already placed)")
+                } else if let entity = makeStartMarkerEntity() {
+                    // Restoring from a saved world map — hidden until Orchestrator commands showStartMarker
+                    let anchor = AnchorEntity(world: a.transform)
+                    anchor.isEnabled = false
+                    anchor.addChild(entity)
+                    arView.scene.addAnchor(anchor)
+                    startMarkerAnchor = anchor
+                    startMarkerARAnch = a
+                    print("📍 [AR] Start marker restored at saved position (hidden)")
+                }
+                continue
+            }
+
             // Add to our tracked AR anchors
             placedARAnchors.append(a)
 
@@ -640,6 +769,18 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 NotificationCenter.default.post(name: .assetsConfigured, object: nil)
             }
         }
+    }
+
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        let status = frame.worldMappingStatus
+        guard status != lastMappingStatus else { return }
+        lastMappingStatus = status
+        let isReady = (status == .mapped || status == .extending)
+        NotificationCenter.default.post(
+            name: .mappingStatusChanged,
+            object: nil,
+            userInfo: ["isReady": isReady, "status": status.rawValue]
+        )
     }
 
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
@@ -888,6 +1029,16 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
         placedARAnchors.removeAll()
 
+        // Also clear start marker
+        if let existing = startMarkerAnchor {
+            arView?.scene.removeAnchor(existing)
+            startMarkerAnchor = nil
+        }
+        if let existing = startMarkerARAnch {
+            arView?.session.remove(anchor: existing)
+            startMarkerARAnch = nil
+        }
+
         currentAsset = nil
     }
 
@@ -947,5 +1098,90 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         placedARAnchors.append(gunARAnch)
 
         print("✅ [AR] Gun automatically placed on table at offset \(relativeOffset)")
+    }
+
+    // MARK: - Start Marker
+
+    private func makeStartMarkerEntity() -> ModelEntity? {
+        guard let arView else { return nil }
+        _ = arView  // suppress unused warning
+        // Flat red circle ~60cm diameter
+        let mesh = MeshResource.generatePlane(width: 0.6, depth: 0.6, cornerRadius: 0.3)
+        var mat = SimpleMaterial()
+        mat.color = .init(tint: UIColor.systemRed.withAlphaComponent(0.85))
+        mat.roughness = 1.0
+        mat.metallic = 0.0
+        return ModelEntity(mesh: mesh, materials: [mat])
+    }
+
+    func placeStartMarkerAtDevicePosition() {
+        guard let arView else { return }
+
+        // Remove any existing start marker
+        if let existing = startMarkerAnchor {
+            arView.scene.removeAnchor(existing)
+            startMarkerAnchor = nil
+        }
+        if let existing = startMarkerARAnch {
+            arView.session.remove(anchor: existing)
+            startMarkerARAnch = nil
+        }
+        startMarkerWorldPosition = nil
+
+        // Raycast straight down from camera world position to find floor directly below device
+        guard let frame = arView.session.currentFrame else { return }
+        let camCol = frame.camera.transform.columns.3
+        let origin = SIMD3<Float>(camCol.x, camCol.y, camCol.z)
+        let query = ARRaycastQuery(origin: origin, direction: SIMD3<Float>(0, -1, 0),
+                                   allowing: .estimatedPlane, alignment: .horizontal)
+        let results = arView.session.raycast(query)
+        guard let hit = results.first else {
+            print("⚠️ [AR] placeStartMarker: no floor hit below device")
+            return
+        }
+
+        guard let entity = makeStartMarkerEntity() else { return }
+
+        let anchor = AnchorEntity(world: hit.worldTransform)
+        anchor.addChild(entity)
+        arView.scene.addAnchor(anchor)
+        startMarkerAnchor = anchor
+        let col = hit.worldTransform.columns.3
+        startMarkerWorldPosition = SIMD3<Float>(col.x, col.y, col.z)
+
+        let arAnchor = ARAnchor(name: "placedAsset_startMarker", transform: hit.worldTransform)
+        arView.session.add(anchor: arAnchor)
+        startMarkerARAnch = arAnchor
+
+        print("📍 [AR] Start marker placed at device feet")
+    }
+
+    func setStartMarkerVisible(_ visible: Bool) {
+        guard let startMarkerAnchor else {
+            print("⚠️ [AR] setStartMarkerVisible(\(visible)) called but no start marker is loaded")
+            return
+        }
+        startMarkerAnchor.isEnabled = visible
+        print("📍 [AR] Start marker visibility set to \(visible)")
+    }
+
+    func clearStartMarker() {
+        if let existing = startMarkerAnchor {
+            arView?.scene.removeAnchor(existing)
+            startMarkerAnchor = nil
+        }
+        if let existing = startMarkerARAnch {
+            arView?.session.remove(anchor: existing)
+            startMarkerARAnch = nil
+        }
+        startMarkerWorldPosition = nil
+    }
+
+    private func startMarkerDistanceFromCamera(frame: ARFrame) -> Float? {
+        guard let markerPos = startMarkerWorldPosition else { return nil }
+        let cam = frame.camera.transform.columns.3
+        let dx = cam.x - markerPos.x
+        let dz = cam.z - markerPos.z
+        return sqrtf(dx * dx + dz * dz)
     }
 }

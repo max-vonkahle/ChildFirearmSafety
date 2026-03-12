@@ -20,16 +20,12 @@ final class Orchestrator: ObservableObject {
     // Ephemeral state
     private var lastNearTime: Date?
     private var cancellables = Set<AnyCancellable>()
-    private var resetAttempts: Int = 0
-    private let maxResetAttempts: Int = 3
     private var isProcessingReset: Bool = false
     private var arEventObserver: NSObjectProtocol?
     private var vcIntentObserver: NSObjectProtocol?
     private var verbalPhaseObserver: NSObjectProtocol?
     private var lastReachGestureTime: Date?
-
-    // Safety behavior tracking for completion
-    private var behaviorTracker = SafetyBehaviorTracker()
+    private var tellAdultWorkItem: DispatchWorkItem?
 
     // Unique instance identifier for debugging
     private let instanceID: String
@@ -84,11 +80,9 @@ final class Orchestrator: ObservableObject {
     // MARK: - Public lifecyle hooks
     func startSession() {
         phase = .verbalRecitation
-        resetAttempts = 0
         isProcessingReset = false
-        behaviorTracker = SafetyBehaviorTracker()
         // VoiceCoach.startSession() (called by the owning view) handles the scripted intro.
-        // Transition to exploration happens when [VERBAL_PHASE_COMPLETE] fires via verbalPhaseObserver.
+        // Transition to act-out happens when the verbal phase completion tool callback posts .verbalPhaseComplete.
     }
 
     func stopSession() {
@@ -118,30 +112,32 @@ final class Orchestrator: ObservableObject {
             print("⚠️ [Orchestrator \(instanceID)] verbalPhaseComplete received in unexpected phase: \(phase)")
             return
         }
-        print("🎓 [Orchestrator \(instanceID)] Verbal phase complete — transitioning to AR exploration")
-        phase = .exploration
+        print("🎓 [Orchestrator \(instanceID)] Verbal phase complete — waiting for act-out start at marker")
+        phase = .awaitingActOutStart
+        postARCommand("prepareActOutStart")
+        postARCommand("disableTapDuringSpeech")
         say(.transitionToActOut)  // VoiceCoach stores this as pendingActOutInstruction
     }
 
     // MARK: - Event handlers
     func handleAREvent(_ e: AREvent) {
-        // Ignore AR events during verbal recitation (child hasn't started the physical act-out yet)
-        guard phase != .verbalRecitation else {
-            print("⏭️ [Orchestrator] AR event ignored (still in verbalRecitation): \(e)")
+        // During verbal recitation, only handle reach gestures and tap-to-reset so the LLM
+        // is informed and the gun can be restored — all other AR events are ignored.
+        if phase == .verbalRecitation {
+            switch e {
+            case .reachGesture:
+                print("🤚 [Orchestrator] Reach gesture during verbalRecitation — notifying LLM")
+                postARCommand("showStartMarker")
+                say(.coachDontTouchWhy)
+            case .userTappedToReset:
+                print("👆 [Orchestrator] Tap-to-reset during verbalRecitation — restoring gun")
+                postARCommand("setGunVisibility:true")
+                say(.resetVerbalRecitation)
+            default:
+                print("⏭️ [Orchestrator] AR event ignored (still in verbalRecitation): \(e)")
+            }
             return
         }
-        print("📥 [Orchestrator] AR event received — phase=\(phase), event=\(e)")
-
-        // print("📥 [Orchestrator] Received AR event: \(e) in phase: \(phase)")
-
-        // Check if this is a reach gesture specifically
-        if case .reachGesture = e {
-            // print("🎯 [Orchestrator] This is a REACH GESTURE event!")
-            // print("   Current phase: \(phase)")
-            // print("   Expected phase: encounterPending")
-            // print("   Phase matches: \(phase == .encounterPending)")
-        }
-
         switch (phase, e) {
         case (.exploration, .gunProximityNear(_)):
             // print("✅ [Orchestrator] Matched: exploration + gunProximityNear")
@@ -151,15 +147,31 @@ final class Orchestrator: ObservableObject {
 
         case (.encounterPending, .childBacksAway(let delta)) where delta > backAwayDelta:
             print("🏃 [Orchestrator] childBacksAway matched in encounterPending — triggering toTellAdultSoon()")
-            behaviorTracker.ranAwayPhysically = true
             phase = .praisePath
             toTellAdultSoon()
 
-        case (.encounterPending, .childRunsAway(let delta, let duration)):
-            print("🏃 [Orchestrator] childRunsAway matched in encounterPending — triggering toTellAdultSoon()")
-            behaviorTracker.ranAwayPhysically = true
+        case (.exploration, .childBacksAway(let delta)) where delta > backAwayDelta:
+            print("🏃 [Orchestrator] childBacksAway matched in exploration — triggering toTellAdultSoon()")
             phase = .praisePath
             toTellAdultSoon()
+
+        case (.encounterPending, .childRunsAway(_, _)):
+            print("🏃 [Orchestrator] childRunsAway matched in encounterPending — triggering toTellAdultSoon()")
+            phase = .praisePath
+            toTellAdultSoon()
+
+        case (.exploration, .childRunsAway(_, _)):
+            print("🏃 [Orchestrator] childRunsAway matched in exploration — triggering toTellAdultSoon()")
+            phase = .praisePath
+            toTellAdultSoon()
+
+        case (.awaitingActOutStart, .childAtStartMarker), (.exploration, .childAtStartMarker), (.resetLoop, .childAtStartMarker):
+            break
+
+        case (.awaitingActOutStart, .userTappedToBeginActOut):
+            print("▶️ [Orchestrator] Act-out started from start marker")
+            phase = .exploration
+            say(.beginActOutScenario)
 
         case (.encounterPending, .reachGesture), (.exploration, .reachGesture):
             // print("🎯 [Orchestrator] REACH GESTURE detected!")
@@ -188,26 +200,11 @@ final class Orchestrator: ObservableObject {
             }
 
             isProcessingReset = true
-            resetAttempts += 1
-            // print("🔄 [Orchestrator] Processing reach gesture. Attempt \(resetAttempts)/\(maxResetAttempts)")
-
-            // print("📤 [Orchestrator] Posting setGunVisibility:false")
             postARCommand("setGunVisibility:false")
-
-            if resetAttempts < maxResetAttempts {
-                // print("📤 [Orchestrator] Setting phase to resetLoop")
-                phase = .resetLoop
-                postARCommand("disableTapDuringSpeech")  // Disable taps while model speaks
-                // print("📤 [Orchestrator] Telling voice coach to say instructReset")
-                say(.instructReset)
-                // Don't auto-reset - wait for user to tap screen to confirm they're ready
-                // print("🔄 [Orchestrator] Waiting for user tap to reset...")
-            } else {
-                // print("📤 [Orchestrator] Max attempts reached, going to coaching path")
-                phase = .coachingPath
-                say(.coachDontTouchWhy)
-                toReflectionSoon()
-            }
+            phase = .resetLoop
+            postARCommand("disableTapDuringSpeech")
+            postARCommand("showStartMarker")
+            say(.instructReset)
 
         case (.resetLoop, .userTappedToReset):
             // User tapped to confirm they're back at starting position
@@ -227,11 +224,18 @@ final class Orchestrator: ObservableObject {
 
     func handleVCIntent(_ i: VCIntent) {
         switch i {
-        case .calledAdult:
+        case .calledAdult(let text, _):
             print("📢 [Orchestrator] calledAdult VCIntent received — phase=\(phase)")
             if phase == .encounterPending || phase == .exploration {
                 phase = .praisePath
                 toTellAdultSoon()
+            } else if phase == .praisePath {
+                // Child called adult spontaneously during the silent window — cancel the prompt timer
+                print("🌟 [Orchestrator] Child called adult spontaneously! Cancelling prompt timer.")
+                tellAdultWorkItem?.cancel()
+                tellAdultWorkItem = nil
+                phase = .tellAdultPrompt
+                say(.childCalledAdultSpontaneously(text: text))
             }
 
         case .askedWhatIsThat:
@@ -241,71 +245,22 @@ final class Orchestrator: ObservableObject {
             say(.answerIsThatReal_safety)
 
         case .generalQuestion:
-            // keep it neutral; keep exploring
-            promptExploration()
-
-        // Verbal explanations of safety rules during reflection
-        case .explainedStop:
-            // print("✅ [Orchestrator] Child explained 'stop'")
-            behaviorTracker.explainedStop = true
-            checkForCompletion()
-
-        case .explainedDontTouch:
-            // print("✅ [Orchestrator] Child explained 'don't touch'")
-            behaviorTracker.explainedDontTouch = true
-            checkForCompletion()
-
-        case .explainedRunAway:
-            // print("✅ [Orchestrator] Child explained 'run away'")
-            behaviorTracker.explainedRunAway = true
-            checkForCompletion()
-
-        case .explainedTellAdult:
-            // print("✅ [Orchestrator] Child explained 'tell adult'")
-            behaviorTracker.explainedTellAdult = true
-            checkForCompletion()
+            break  // LLM handles naturally via system prompt
         }
     }
 
     // MARK: - Helpers
     private func toTellAdultSoon() {
-        print("⏱️ [Orchestrator] Child ran away — starting 2.5s silence gap before tell-adult prompt")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            print("⏱️ [Orchestrator] Silence gap elapsed — firing promptTellAdultPhrase now")
+        print("⏱️ [Orchestrator] Child ran away — 3s silent window (child may call adult spontaneously)")
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            print("⏱️ [Orchestrator] Silent window elapsed — child didn't call adult, prompting now")
             self.phase = .tellAdultPrompt
             self.say(.promptTellAdultPhrase)
+            self.tellAdultWorkItem = nil
         }
-    }
-
-    private func toReflectionSoon() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            self.phase = .reflection
-            self.say(.reflectionQ1)
-        }
-    }
-
-    private func checkForCompletion() {
-        print("🔍 [Orchestrator] checkForCompletion called — phase=\(phase), allComplete=\(behaviorTracker.allBehaviorsComplete)")
-        guard phase == .reflection else {
-            print("⏭️ [Orchestrator] checkForCompletion skipped — phase is \(phase), not .reflection")
-            return
-        }
-
-        if behaviorTracker.allBehaviorsComplete {
-            // print("🎉 [Orchestrator] All behaviors complete! Triggering training completion")
-            phase = .completed
-            say(.trainingComplete)
-            // Post notification to trigger UI transition to completion screen
-            NotificationCenter.default.post(name: .trainingSessionComplete, object: nil)
-        }
-    }
-
-    // scheduleReset() removed - now using manual tap-to-reset flow
-
-    private func promptExploration() {
-        guard phase == .exploration else { return }
-        // Rotate a few generic hints; here pass nil or a simple area string
-        say(.neutralExplorationPrompt(area: nil))
+        tellAdultWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
     }
 
     // MARK: - Bus senders

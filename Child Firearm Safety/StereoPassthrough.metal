@@ -58,20 +58,29 @@ fragment float4 stereoPassthroughFragment(VertexOut in [[stage_in]],
 
 // Fragment shader for occlusion overlay
 // Renders camera feed only where the segmentation mask indicates a person
+// who is in front of the virtual gun (depth-aware).
 fragment float4 stereoOcclusionFragment(VertexOut in [[stage_in]],
                                          texture2d<float> yTexture [[texture(0)]],
                                          texture2d<float> cbcrTexture [[texture(1)]],
                                          texture2d<float> segmentationTexture [[texture(2)]],
+                                         texture2d<float> depthTexture [[texture(3)]],
+                                         constant float& gunDepth [[buffer(0)]],
                                          sampler textureSampler [[sampler(0)]]) {
     // Sample segmentation mask (person = 1.0, background = 0.0)
-    // The segmentation texture may have different dimensions, so we sample at the same UV
     float segmentation = segmentationTexture.sample(textureSampler, in.texCoord).r;
-    
+
     // If no person detected at this pixel, make fully transparent
     if (segmentation < 0.5) {
         return float4(0.0, 0.0, 0.0, 0.0);
     }
-    
+
+    // Depth check: only occlude if the person pixel is actually in front of the gun.
+    // LiDAR depth is in meters; zero means unavailable — skip check in that case.
+    float realDepth = depthTexture.sample(textureSampler, in.texCoord).r;
+    if (realDepth > 0.01 && gunDepth > 0.01 && realDepth > gunDepth) {
+        return float4(0.0, 0.0, 0.0, 0.0);  // Person is behind the virtual object
+    }
+
     // Sample Y and CbCr textures
     float y = yTexture.sample(textureSampler, in.texCoord).r;
     float2 cbcr = cbcrTexture.sample(textureSampler, in.texCoord).rg;
@@ -85,6 +94,6 @@ fragment float4 stereoOcclusionFragment(VertexOut in [[stage_in]],
     rgb.g = y - 0.344136 * cb - 0.714136 * cr;
     rgb.b = y + 1.772 * cb;
 
-    // Return with full opacity where person is detected
+    // Return with full opacity where person is detected and in front of the gun
     return float4(rgb, 1.0);
 }

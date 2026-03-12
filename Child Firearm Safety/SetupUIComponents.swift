@@ -123,56 +123,107 @@ struct SetupControlButtons: View {
     let onClear: () -> Void
     let onPlace: () -> Void
     let onSave: () -> Void
+    var onMarker: (() -> Void)? = nil
+    var onClearMarker: (() -> Void)? = nil
     let isArmed: Bool
     let canSave: Bool
+    var mappingReady: Bool = false
+    var mappingStatusLabel: String = "Scanning…"
     let placeLabel: String
+    var showMarkerButton: Bool = false
+    var markerPlaced: Bool = false
 
     init(
         onClear: @escaping () -> Void,
         onPlace: @escaping () -> Void,
         onSave: @escaping () -> Void,
+        onMarker: (() -> Void)? = nil,
+        onClearMarker: (() -> Void)? = nil,
         isArmed: Bool = false,
         canSave: Bool = true,
-        placeLabel: String = "Place"
+        mappingReady: Bool = false,
+        mappingStatusLabel: String = "Scanning…",
+        placeLabel: String = "Place",
+        showMarkerButton: Bool = false,
+        markerPlaced: Bool = false
     ) {
         self.onClear = onClear
         self.onPlace = onPlace
         self.onSave = onSave
+        self.onMarker = onMarker
+        self.onClearMarker = onClearMarker
         self.isArmed = isArmed
         self.canSave = canSave
+        self.mappingReady = mappingReady
+        self.mappingStatusLabel = mappingStatusLabel
         self.placeLabel = placeLabel
+        self.showMarkerButton = showMarkerButton
+        self.markerPlaced = markerPlaced
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Button {
-                onClear()
-            } label: {
-                Label("Clear", systemImage: "trash")
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
+        VStack(spacing: 10) {
+            // Mapping status indicator (shown when save is not yet available)
+            if !mappingReady {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(.white)
+                    Text(mappingStatusLabel)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.7))
+                .cornerRadius(10)
             }
 
-            Button {
-                onPlace()
-            } label: {
-                Label(placeLabel, systemImage: "plus.circle")
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(isArmed ? Color.blue.opacity(0.25) : Color.clear)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
+            // Primary row: Clear | Place | Save
+            HStack(spacing: 12) {
+                Button(action: onClear) {
+                    Label("Clear", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(12)
+                }
+
+                Button(action: onPlace) {
+                    Label(placeLabel, systemImage: "plus.circle")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(isArmed ? Color.blue.opacity(0.25) : Color.clear)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(12)
+                }
+
+                Button(action: onSave) {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(canSave ? Color.green.opacity(0.25) : Color.clear)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(12)
+                }
+                .disabled(!canSave)
+                .opacity(canSave ? 1.0 : 0.4)
             }
 
-            Button {
-                onSave()
-            } label: {
-                Label("Save Room", systemImage: "square.and.arrow.down")
-                    .padding(.horizontal, 14).padding(.vertical, 10)
+            // Marker row: only shown after table is placed
+            if showMarkerButton {
+                Button(action: markerPlaced ? { onClearMarker?() } : { onMarker?() }) {
+                    Label(
+                        markerPlaced ? "Clear Start Marker" : "Mark Start Position",
+                        systemImage: markerPlaced ? "mappin.slash" : "mappin"
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(markerPlaced ? Color.green.opacity(0.2) : Color.clear)
                     .background(.ultraThinMaterial)
                     .cornerRadius(12)
+                }
             }
-            .disabled(!canSave)
         }
         .padding()
         .background(.ultraThinMaterial)

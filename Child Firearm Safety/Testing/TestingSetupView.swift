@@ -495,6 +495,24 @@ final class TestingWallSelectorViewController: UIViewController {
         }
         setVisibleStageForCompositeSetup(nil)
         startCameraTransform = cameraTransform
+
+        // Raycast floor to place start marker at device feet
+        let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+        let hits = arView.raycast(from: screenCenter, allowing: .estimatedPlane, alignment: .horizontal)
+        if let hit = hits.first {
+            placedAssetTransforms["startMarker"] = hit.worldTransform
+            // Show a flat red visual in setup so the adult sees the marker
+            let mesh = MeshResource.generatePlane(width: 0.6, depth: 0.6, cornerRadius: 0.3)
+            var mat = SimpleMaterial()
+            mat.color = .init(tint: UIColor.systemRed.withAlphaComponent(0.8))
+            let entity = ModelEntity(mesh: mesh, materials: [mat])
+            let anchor = AnchorEntity(world: hit.worldTransform)
+            anchor.addChild(entity)
+            arView.scene.addAnchor(anchor)
+            placedAssetAnchors["startMarker"] = anchor
+            print("📍 [TestingSetup] Start marker placed at device feet")
+        }
+
         refreshCompositeUIState()
     }
 
