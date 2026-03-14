@@ -74,6 +74,7 @@ final class GeminiFlashLiveClient {
     private var responseTask: Task<Void, Never>?
 
     private var currentHandlers: Handlers?
+    private var didEmitDoneForCurrentTurn = false
     private var pendingAudio = Data()
     private var pendingSampleRate: Double = 24_000
 
@@ -197,6 +198,7 @@ final class GeminiFlashLiveClient {
             }
 
             currentHandlers = handlers
+            didEmitDoneForCurrentTurn = false
             pendingAudio.removeAll(keepingCapacity: false)
             pendingSampleRate = 24_000
 
@@ -206,6 +208,7 @@ final class GeminiFlashLiveClient {
             // print("🟥 [Live] Failed to start audio conversation: \(error)")
             handlers.onError?(error)
             currentHandlers = nil
+            didEmitDoneForCurrentTurn = false
         }
     }
 
@@ -217,6 +220,7 @@ final class GeminiFlashLiveClient {
         self.session = nil
         pendingAudio.removeAll(keepingCapacity: false)
         currentHandlers = nil
+        didEmitDoneForCurrentTurn = false
         if let session {
             Task { await session.close() }
         }
@@ -230,6 +234,7 @@ final class GeminiFlashLiveClient {
             try Task.checkCancellation()
 
             currentHandlers = handlers
+            didEmitDoneForCurrentTurn = false
             pendingAudio.removeAll(keepingCapacity: false)
             pendingSampleRate = 24_000
 
@@ -243,6 +248,7 @@ final class GeminiFlashLiveClient {
         } catch {
             handlers.onError?(error)
             currentHandlers = nil
+            didEmitDoneForCurrentTurn = false
         }
     }
 
@@ -342,12 +348,11 @@ final class GeminiFlashLiveClient {
 
                 for part in turn.parts {
                     if let textPart = part as? TextPart {
-                        // Skip thinking/reasoning tokens — they are internal chain-of-thought,
-                        // not spoken content, and should not appear in the transcript.
-                        guard !textPart.isThought else { continue }
-                        #if DEBUG
-                        // print("🟩 [LLM ← text] \(textPart.text)")
-                        #endif
+                        if textPart.isThought {
+                            print("💭 [LLM THINK] \(textPart.text)")
+                            continue
+                        }
+                        print("🗣️ [LLM SPEAK] \(textPart.text)")
                         handlers.onTextDelta?(textPart.text)
 
                     } else if let inlinePart = part as? InlineDataPart {
@@ -385,21 +390,23 @@ final class GeminiFlashLiveClient {
                 // print("🟣 [Live] MODEL TURN COMPLETE — buffered audio size: \(pendingAudio.count) bytes at \(pendingSampleRate) Hz")
                 #endif
                 pendingAudio.removeAll(keepingCapacity: false)
+                guard !didEmitDoneForCurrentTurn else { return }
+                didEmitDoneForCurrentTurn = true
                 #if DEBUG
                 // print("✅ [Live] turn complete")
                 #endif
-                let doneHandler = currentHandlers?.onDone
-                currentHandlers = nil
-                // Call onDone after clearing handlers to avoid re-entrancy issues
-                doneHandler?()
+                currentHandlers?.onDone?()
             }
 
         case .goingAwayNotice:
             #if DEBUG
             // print("🟥 [Live] goingAwayNotice (session closing)")
             #endif
-            currentHandlers?.onDone?()
+            if !didEmitDoneForCurrentTurn {
+                currentHandlers?.onDone?()
+            }
             currentHandlers = nil
+            didEmitDoneForCurrentTurn = false
 
         case .toolCall(let toolCall):
             guard let functionCalls = toolCall.functionCalls else { break }
@@ -457,6 +464,7 @@ final class GeminiFlashLiveClient {
             handlers.onError?(error)
         }
         currentHandlers = nil
+        didEmitDoneForCurrentTurn = false
         pendingAudio.removeAll(keepingCapacity: false)
 
         // Fully tear down the live session on error so the next turn
@@ -474,6 +482,7 @@ final class GeminiFlashLiveClient {
         // cleanly close the current live session so the next turn can
         // re-establish a fresh connection.
         currentHandlers = nil
+        didEmitDoneForCurrentTurn = false
         pendingAudio.removeAll(keepingCapacity: false)
 
         let oldSession = session

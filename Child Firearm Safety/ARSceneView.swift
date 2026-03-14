@@ -11,6 +11,7 @@ struct ARSceneView<Overlay: View>: View {
      @Binding var isArmed: Bool
      @Binding var clearTick: Int
      @Binding var selectedAsset: String?
+     var shouldRecordSession: Bool
      var onDisarm: () -> Void
      var onSceneAppear: (() -> Void)? = nil
      var onSceneTap: (() -> Void)? = nil
@@ -24,6 +25,7 @@ struct ARSceneView<Overlay: View>: View {
     init(isArmed: Binding<Bool>,
          clearTick: Binding<Int>,
          selectedAsset: Binding<String?>? = nil,
+         shouldRecordSession: Bool = false,
          onDisarm: @escaping () -> Void,
          onSceneAppear: (() -> Void)? = nil,
          onSceneTap: (() -> Void)? = nil,
@@ -36,6 +38,7 @@ struct ARSceneView<Overlay: View>: View {
         } else {
             _selectedAsset = .constant(nil)
         }
+        self.shouldRecordSession = shouldRecordSession
         self.onDisarm = onDisarm
         self.onSceneAppear = onSceneAppear
         self.onSceneTap = onSceneTap
@@ -46,7 +49,7 @@ struct ARSceneView<Overlay: View>: View {
     var body: some View {
         ZStack {
             if cardboardMode {
-                StereoARContainer()
+                StereoARContainer(shouldRecordSession: shouldRecordSession)
                     .ignoresSafeArea()
             } else {
                 ARViewContainer(isArmed: $isArmed,
@@ -93,6 +96,7 @@ extension ARSceneView where Overlay == EmptyView {
     init(isArmed: Binding<Bool>,
          clearTick: Binding<Int>,
          selectedAsset: Binding<String?>? = nil,
+         shouldRecordSession: Bool = false,
          onDisarm: @escaping () -> Void,
          onSceneAppear: (() -> Void)? = nil,
          onSceneTap: (() -> Void)? = nil,
@@ -100,6 +104,7 @@ extension ARSceneView where Overlay == EmptyView {
         self.init(isArmed: isArmed,
                   clearTick: clearTick,
                   selectedAsset: selectedAsset,
+                  shouldRecordSession: shouldRecordSession,
                   onDisarm: onDisarm,
                   onSceneAppear: onSceneAppear,
                   onSceneTap: onSceneTap,
@@ -148,13 +153,16 @@ private extension ARSceneView {
 struct StableARSceneView: View, Equatable {
     @Binding var isArmed: Bool
     @Binding var clearTick: Int
+    var shouldRecordSession: Bool
     var onDisarm: () -> Void
     var onSceneAppear: (() -> Void)?
     var onExit: (() -> Void)?
 
     static func == (lhs: StableARSceneView, rhs: StableARSceneView) -> Bool {
         // Only allow updates when AR-relevant state actually changes
-        let isEqual = lhs.isArmed == rhs.isArmed && lhs.clearTick == rhs.clearTick
+        let isEqual = lhs.isArmed == rhs.isArmed
+            && lhs.clearTick == rhs.clearTick
+            && lhs.shouldRecordSession == rhs.shouldRecordSession
         if !isEqual {
             // print("🔄 [StableAR] Allowing re-render: isArmed=\(lhs.isArmed)->\(rhs.isArmed), clearTick=\(lhs.clearTick)->\(rhs.clearTick)")
         }
@@ -165,6 +173,7 @@ struct StableARSceneView: View, Equatable {
         ARSceneView(
             isArmed: $isArmed,
             clearTick: $clearTick,
+            shouldRecordSession: shouldRecordSession,
             onDisarm: onDisarm,
             onSceneAppear: onSceneAppear,
             onExit: onExit

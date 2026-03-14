@@ -47,7 +47,7 @@ struct LiveVoiceTestView: View {
 
         let prompt = """
         You are a child-safety coach. Never explain how to handle or operate a gun.
-        Focus on: don’t touch it, move away, and tell a trusted adult. Keep replies short.
+        Focus on: don't touch it, move away, and tell a trusted adult. Keep replies short.
 
         Child: \(input)
         """

@@ -81,12 +81,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     // Tuning knobs
     private let pixelPadding: CGFloat = 24        // expands gun rect in screen px
     private let depthMargin: Float = 0.07         // hand must be this much closer than gun (meters)
-    private let maxReachDistance: Float = 0.5     // hand must be within 0.5m of gun depth to count as reaching
+    private let maxReachDistance: Float = 0.25    // hand must be within 0.25m of gun depth to count as reaching
     private let decisionInterval: CFTimeInterval = 0.15
     private let runAwayThreshold: Float = 1.5       // Must retreat 1.5m+ to count as "running"
     private let runAwayMaxTime: CFTimeInterval = 2.0 // Must do it within 2 seconds
-    private let backAwayThreshold: Float = 0.7      // Backing away threshold (existing behavior)
-    private let backAwayMaxTime: CFTimeInterval = 3.0 // Backing away time window
     private let markerReachDistance: Float = 0.5     // Must get within 0.5m of the red marker
 
     // Prevent overlapping frame processing
@@ -296,14 +294,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                             print("🏃 [AR-Retreat] childRunsAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
                             NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
                                 userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)])
-                        }
-                        // Fall back to backing away
-                        else if retreatDistance > backAwayThreshold, retreatElapsed < backAwayMaxTime {
-                            wasNear = false
-                            isRetreating = false
-                            print("🚶 [AR-Retreat] childBacksAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
-                            NotificationCenter.default.post(name: .arTrainingEvent, object: nil,
-                                userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)])
                         }
                     }
 

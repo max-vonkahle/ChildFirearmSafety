@@ -333,6 +333,11 @@ struct TestingWallSelectorView: UIViewControllerRepresentable {
 // MARK: - AR View Controller (logic only)
 
 final class TestingWallSelectorViewController: UIViewController {
+    private enum SetupCheckpoint: String {
+        case startPosition = "start position"
+        case startDirection = "start direction"
+    }
+
     var roomId:      String?
     var createRoomTemplate: TestingRoomTemplate = .kitchen
     var state:       TestingSetupState!
@@ -354,7 +359,8 @@ final class TestingWallSelectorViewController: UIViewController {
     private var selectedAsset: String? = nil
     private var waitingForRoomWall: Bool = false
     private var roomAwaitingWallSelection: String?
-    private var startCameraTransform: simd_float4x4?
+    private var startPositionTransform: simd_float4x4?
+    private var startDirectionTransform: simd_float4x4?
 
     // MARK: - Lifecycle
 
@@ -453,9 +459,22 @@ final class TestingWallSelectorViewController: UIViewController {
     private func refreshCompositeUIState() {
         let placedCount = roomStageOrder.filter { placedAssetTransforms[$0.assetName] != nil }.count
         let allRoomsPlaced = (placedCount == roomStageOrder.count)
-        state.startPositionCaptured = (startCameraTransform != nil)
-        state.canSaveComposite = allRoomsPlaced && state.startPositionCaptured
+        let startSetupComplete = (startPositionTransform != nil && startDirectionTransform != nil)
+        state.startPositionCaptured = startSetupComplete
+        state.canSaveComposite = allRoomsPlaced && startSetupComplete
         state.hasPlacedRoom = state.canSaveComposite
+
+        if let checkpoint = state.awaitingConfirmationForStage.flatMap(SetupCheckpoint.init(rawValue:)) {
+            switch checkpoint {
+            case .startPosition:
+                state.placeActionLabel = "Set Start Position"
+                state.setupInstructionBanner = "Is the red start marker in the right spot? Clear to redo or Save to continue to start direction."
+            case .startDirection:
+                state.placeActionLabel = "Set Start Direction"
+                state.setupInstructionBanner = "Face the room the way the child should start. Clear to redo or Save to finish the setup."
+            }
+            return
+        }
 
         if waitingForRoomWall, let roomAwaitingWallSelection, let stage = TestingStage(rawValue: roomAwaitingWallSelection) {
             state.placeActionLabel = "Place \(stage.displayName)"
@@ -472,12 +491,19 @@ final class TestingWallSelectorViewController: UIViewController {
             } else {
                 state.setupInstructionBanner = "If the placement is good, tap Place \(nextStage.displayName)"
             }
-        } else if startCameraTransform == nil {
+        } else if startPositionTransform == nil {
             state.placeActionLabel = "Set Start Position"
-            state.setupInstructionBanner = "If the bedroom placement is good, stand at the starting spot and tap Set Start Position"
+            if isArmed && selectedAsset == SetupCheckpoint.startPosition.rawValue {
+                state.setupInstructionBanner = "Tap the floor where the child should start."
+            } else {
+                state.setupInstructionBanner = "If the bedroom placement is good, tap Set Start Position, then tap the floor where the child should start."
+            }
+        } else if startDirectionTransform == nil {
+            state.placeActionLabel = "Set Start Direction"
+            state.setupInstructionBanner = "Stand at the saved start spot, face the room the way the child should start, and tap Set Start Direction."
         } else {
             state.placeActionLabel = "Re-set Start Position"
-            state.setupInstructionBanner = "Start position saved. If everything looks correct, tap Save Room"
+            state.setupInstructionBanner = "Start position and direction saved. If everything looks correct, tap Save Room."
         }
     }
 
@@ -486,39 +512,90 @@ final class TestingWallSelectorViewController: UIViewController {
             isArmed = true
             selectedAsset = nextStage.assetName
             setVisibleStageForCompositeSetup(nextStage)
+            refreshCompositeUIState()
             return
         }
 
-        guard let cameraTransform = arView.session.currentFrame?.camera.transform else {
-            showScanningAlert(message: "Move the device a little more, then try setting the start position again.")
+        if startPositionTransform == nil {
+            isArmed = true
+            selectedAsset = SetupCheckpoint.startPosition.rawValue
+            setVisibleStageForCompositeSetup(nil)
+            refreshCompositeUIState()
             return
         }
+
+        if startDirectionTransform == nil {
+            guard let cameraTransform = arView.session.currentFrame?.camera.transform,
+                  let startPositionTransform else {
+                showScanningAlert(message: "Move the device a little more, then try setting the start direction again.")
+                return
+            }
+            startDirectionTransform = stabilizedDirectionTransform(
+                from: cameraTransform,
+                anchoredAt: startPositionTransform.columns.3
+            )
+            state.awaitingConfirmationForStage = SetupCheckpoint.startDirection.rawValue
+            refreshCompositeUIState()
+            return
+        }
+
+        clearStartMarker()
         setVisibleStageForCompositeSetup(nil)
-        startCameraTransform = cameraTransform
+        startPositionTransform = nil
+        startDirectionTransform = nil
+        isArmed = true
+        selectedAsset = SetupCheckpoint.startPosition.rawValue
+        refreshCompositeUIState()
+    }
 
-        // Raycast floor to place start marker at device feet
-        let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
-        let hits = arView.raycast(from: screenCenter, allowing: .estimatedPlane, alignment: .horizontal)
-        if let hit = hits.first {
-            placedAssetTransforms["startMarker"] = hit.worldTransform
-            // Show a flat red visual in setup so the adult sees the marker
-            let mesh = MeshResource.generatePlane(width: 0.6, depth: 0.6, cornerRadius: 0.3)
-            var mat = SimpleMaterial()
-            mat.color = .init(tint: UIColor.systemRed.withAlphaComponent(0.8))
-            let entity = ModelEntity(mesh: mesh, materials: [mat])
-            let anchor = AnchorEntity(world: hit.worldTransform)
-            anchor.addChild(entity)
-            arView.scene.addAnchor(anchor)
-            placedAssetAnchors["startMarker"] = anchor
-            print("📍 [TestingSetup] Start marker placed at device feet")
+    private func stabilizedDirectionTransform(
+        from cameraTransform: simd_float4x4,
+        anchoredAt position: SIMD4<Float>
+    ) -> simd_float4x4 {
+        let worldUp = SIMD3<Float>(0, 1, 0)
+        let forwardHint = -SIMD3<Float>(cameraTransform.columns.2.x, 0, cameraTransform.columns.2.z)
+        let rightHint = SIMD3<Float>(cameraTransform.columns.0.x, 0, cameraTransform.columns.0.z)
+
+        let forward: SIMD3<Float>
+        if simd_length_squared(forwardHint) > 0.0001 {
+            forward = simd_normalize(forwardHint)
+        } else if simd_length_squared(rightHint) > 0.0001 {
+            let right = simd_normalize(rightHint)
+            forward = simd_normalize(simd_cross(right, worldUp))
+        } else {
+            forward = SIMD3<Float>(0, 0, -1)
         }
 
-        refreshCompositeUIState()
+        let right = simd_normalize(simd_cross(worldUp, forward))
+
+        var transform = simd_float4x4(
+            SIMD4<Float>(right.x, right.y, right.z, 0),
+            SIMD4<Float>(worldUp.x, worldUp.y, worldUp.z, 0),
+            SIMD4<Float>(-forward.x, -forward.y, -forward.z, 0),
+            position
+        )
+        transform.columns.3.y = cameraTransform.columns.3.y
+        return transform
     }
 
     /// Clears only the asset currently awaiting confirmation; falls back to clearing everything.
     private func clearCurrentOrAllAssets() {
-        if let stageName = state.awaitingConfirmationForStage,
+        if let checkpoint = state.awaitingConfirmationForStage.flatMap(SetupCheckpoint.init(rawValue:)) {
+            switch checkpoint {
+            case .startPosition:
+                clearStartMarker()
+                startPositionTransform = nil
+                startDirectionTransform = nil
+                state.awaitingConfirmationForStage = nil
+                isArmed = true
+                selectedAsset = SetupCheckpoint.startPosition.rawValue
+                refreshCompositeUIState()
+            case .startDirection:
+                startDirectionTransform = nil
+                state.awaitingConfirmationForStage = nil
+                refreshCompositeUIState()
+            }
+        } else if let stageName = state.awaitingConfirmationForStage,
            let stage = TestingStage(rawValue: stageName) {
             // Remove only this stage's room + gun
             let roomKey = stage.assetName
@@ -547,7 +624,8 @@ final class TestingWallSelectorViewController: UIViewController {
             placedAssets.removeAll()
             placedAssetTransforms.removeAll()
             placedAssetAnchors.removeAll()
-            startCameraTransform = nil
+            startPositionTransform = nil
+            startDirectionTransform = nil
             state.awaitingConfirmationForStage = nil
             state.hasPlacedRoom = false
             refreshCompositeUIState()
@@ -556,6 +634,17 @@ final class TestingWallSelectorViewController: UIViewController {
 
     /// Called when user taps "Save [Room]" in the confirmation UI — advances to the next stage.
     private func confirmCurrentAsset() {
+        if let checkpoint = state.awaitingConfirmationForStage.flatMap(SetupCheckpoint.init(rawValue:)) {
+            state.awaitingConfirmationForStage = nil
+            switch checkpoint {
+            case .startPosition:
+                startDirectionTransform = nil
+            case .startDirection:
+                break
+            }
+            refreshCompositeUIState()
+            return
+        }
         state.awaitingConfirmationForStage = nil
         roomAwaitingWallSelection = nil
         if let nextStage = nextMissingStage() {
@@ -607,6 +696,39 @@ final class TestingWallSelectorViewController: UIViewController {
         }
 
         guard isArmed, let selectedAssetName = selectedAsset else { return }
+
+        if selectedAssetName == SetupCheckpoint.startPosition.rawValue {
+            let floorResults = arView.raycast(
+                from: location,
+                allowing: .estimatedPlane,
+                alignment: .horizontal
+            )
+            guard let result = floorResults.first else {
+                showScanningAlert(message: "Tap the floor where the child should start.")
+                return
+            }
+
+            clearStartMarker()
+            startPositionTransform = result.worldTransform
+            startDirectionTransform = nil
+            placedAssetTransforms["startMarker"] = result.worldTransform
+
+            let mesh = MeshResource.generatePlane(width: 0.6, depth: 0.6, cornerRadius: 0.3)
+            var mat = SimpleMaterial()
+            mat.color = .init(tint: UIColor.systemRed.withAlphaComponent(0.8))
+            let entity = ModelEntity(mesh: mesh, materials: [mat])
+            let anchor = AnchorEntity(world: result.worldTransform)
+            anchor.addChild(entity)
+            arView.scene.addAnchor(anchor)
+            placedAssetAnchors["startMarker"] = anchor
+
+            isArmed = false
+            selectedAsset = nil
+            state.awaitingConfirmationForStage = SetupCheckpoint.startPosition.rawValue
+            print("📍 [TestingSetup] Start position placed")
+            refreshCompositeUIState()
+            return
+        }
 
         // Check world mapping status before allowing placement
         if let frame = arView.session.currentFrame {
@@ -867,7 +989,13 @@ final class TestingWallSelectorViewController: UIViewController {
                 roomId: roomId,
                 worldMap: worldMap,
                 assets: self.placedAssetTransforms,
-                startCameraTransform: self.startCameraTransform
+                startPositionTransform: self.startPositionTransform,
+                startDirectionTransform: self.startDirectionTransform,
+                startCameraTransform: RoomLibrary.composeStartAlignmentTransform(
+                    startPositionTransform: self.startPositionTransform,
+                    startDirectionTransform: self.startDirectionTransform,
+                    legacyStartCameraTransform: nil
+                )
             )
 
             // Dismiss on success
@@ -882,7 +1010,8 @@ final class TestingWallSelectorViewController: UIViewController {
     private func loadTestingRoom(_ roomId: String) {
         guard let roomData = RoomLibrary.loadTestingRoom(roomId: roomId) else { return }
         let assetTransforms = roomData.assets
-        startCameraTransform = roomData.startCameraTransform
+        startPositionTransform = roomData.startPositionTransform
+        startDirectionTransform = roomData.startDirectionTransform
 
         // CRITICAL: Load the world map to establish correct coordinate system
         let config = ARWorldTrackingConfiguration()
@@ -941,6 +1070,14 @@ final class TestingWallSelectorViewController: UIViewController {
         if roomId == nil {
             setVisibleStageForCompositeSetup(nextMissingStage())
         }
+    }
+
+    private func clearStartMarker() {
+        if let startMarkerAnchor = placedAssetAnchors["startMarker"] {
+            arView.scene.removeAnchor(startMarkerAnchor)
+        }
+        placedAssetAnchors.removeValue(forKey: "startMarker")
+        placedAssetTransforms.removeValue(forKey: "startMarker")
     }
 
     private func statusDescription(_ status: ARFrame.WorldMappingStatus) -> String {

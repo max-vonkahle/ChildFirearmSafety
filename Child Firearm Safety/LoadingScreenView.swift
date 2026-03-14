@@ -6,9 +6,18 @@
 //
 
 import SwiftUI
+
+struct LoadingDebugInfo {
+    var mappingStatus: String
+    var detailLines: [String] = []
+}
+
 struct LoadingScreenView: View {
     var message: String = "Loading your training environment..."
+    var onExit: (() -> Void)? = nil
+    var debugInfo: LoadingDebugInfo? = nil
     @AppStorage("cardboardMode") private var cardboardMode = false
+    @State private var showExitButton = false
 
     var body: some View {
         ZStack {
@@ -62,6 +71,54 @@ struct LoadingScreenView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)
                 }
+            }
+
+            if let debugInfo {
+                VStack {
+                    Spacer()
+                    VStack(spacing: 8) {
+                        Text("Mapping: \(debugInfo.mappingStatus)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.white)
+                        ForEach(debugInfo.detailLines, id: \.self) { line in
+                            Text(line)
+                                .font(.footnote)
+                                .foregroundColor(.white.opacity(0.85))
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.horizontal, cardboardMode ? 64 : 24)
+                    .padding(.bottom, 48)
+                }
+            }
+
+            if let onExit, showExitButton {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: onExit) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Color.white.opacity(0.12), in: Circle())
+                        }
+                        .padding(.top, cardboardMode ? 44 : 20)
+                        .padding(.trailing, 20)
+                    }
+                    Spacer()
+                }
+                .transition(.opacity)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard onExit != nil else { return }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showExitButton.toggle()
             }
         }
     }

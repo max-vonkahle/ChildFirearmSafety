@@ -5,3 +5,4 @@ precompute_embeddings.py
 CLAUDE.md
 RAGDocuments_cleaned.json
 merge_cleaned.py
+docs/

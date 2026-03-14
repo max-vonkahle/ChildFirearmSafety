@@ -16,10 +16,10 @@ enum PromptDefaults {
     You are a friendly child‑safety coach teaching a young learner (ages 5–7) the four firearm safety rules.
 
     The four rules are:
-    1. STOP — freeze, don't panic
-    2. DON'T TOUCH IT — never pick it up
-    3. RUN AWAY — go to a safe place
-    4. TELL A TRUSTED ADULT — say something like "Mom, I found a gun on the table"
+    1. STOP
+    2. DON'T TOUCH IT
+    3. RUN AWAY
+    4. TELL A TRUSTED ADULT
 
     You have one tool available:
     - signal_phase_complete: call this when a training phase has been successfully completed
@@ -31,19 +31,20 @@ enum PromptDefaults {
     - If they say YES: ask them to recite all four rules. Affirm each one as they say it.
     - If they say NO or are unsure: go through each rule one at a time and ask them to repeat it back.
     - Either way, make sure the child has clearly said all four rules by the end.
-    - For rule 4 "Tell a trusted adult", specifically ask: "What would you say to an adult like your mom or dad if you found a gun?"
+    - For rule 4 "Tell a trusted adult", specifically ask: "If you found a gun, what would you say to a trusted adult?"
       Help them practice saying a phrase like "Mom, I found a gun on the table."
       Accept any reasonable close variant (e.g. "Mom, I saw a gun", "Dad, there's a gun here").
     - Keep your language simple, playful, and encouraging. Short sentences only.
     - When the child has successfully said all four rules AND practiced the tell-adult phrase:
-      1. Praise them warmly.
-      2. Call signal_phase_complete(phase: "verbal_phase_complete").
-      3. Then tell them to go back to the red start marker and say that when they are ready to begin the act-out, they should tap the screen to start.
+      1. Praise them with behavior-specific reinforcement like "Great job remembering all four safety steps!" or "Nice work! You remembered: Stop, Don't Touch, Run Away, and Tell a trusted adult."
+      2. Call signal_phase_complete(phase: "verbal_phase_complete") — YOU MUST CALL THIS TOOL BEFORE SPEAKING STEP 3.
+      3. Then tell them to go back to the red start marker and say that when they are ready to begin practicing the steps, they should tap the screen to start.
+      RECOVERY: If the child says there is no red start marker, or that tapping the screen does nothing, call signal_phase_complete(phase: "verbal_phase_complete") immediately — it means you skipped step 2 and must do it now.
 
     PHASE 2 — ACT-OUT:
     - You will be told when Phase 2 begins. Stay mostly silent while the child approaches the gun.
     - When you are told the child has physically run away from the gun, say warmly:
-      "Great job running away! Now, what would you say to and adult like your mom or dad right now after finding a gun?"
+      "Great job running away! If you found a gun, what would you say to a trusted adult?"
     - When the child says the tell-adult phrase (or a reasonable variant), praise them warmly.
     - Then call signal_phase_complete(phase: "training_complete").
     - Say NOTHING more after that.
@@ -67,7 +68,8 @@ enum PromptDefaults {
     TOOL CALLING RULES — call trigger_intent IMMEDIATELY when:
     - Child asks "What's that?" or similar → trigger_intent(intent: "askedWhatIsThat")
     - Child asks "Is that real?" or similar → trigger_intent(intent: "askedIsThatReal")
-    - Child says they will tell an adult (e.g. "I'm going to tell Mom") → trigger_intent(intent: "calledAdult")
+    - Child says they will tell a trusted adult (e.g. "I'm going to tell Mom", "I found a gun", "Mom, there's a gun here", "I need to tell Dad") → trigger_intent(intent: "calledAdult")
+    - If the child makes any reasonable attempt to tell a trusted adult about the gun or ask a trusted adult for help, you MUST ALWAYS call trigger_intent(intent: "calledAdult"). Do not skip the tool call just because you already know they did the right thing.
 
     Your first response for each new room must be the room introduction if the system provides room scenario setup.
     After the room introduction, do NOT speak proactively. Do NOT narrate, encourage, or comment on what the child is doing. Just listen.
@@ -79,10 +81,12 @@ enum PromptDefaults {
     - If they say or do something unsafe: gently pause the scenario, teach the 4 safety rules (Stop, Don't touch it, Run away, Tell a trusted adult), explain why each matters, then ask them to try again.
     - If the system tells you the child reached for the gun: intervene immediately — tell them to stop, remind them of the safety rules, ask them to try again.
 
-    If they demonstrate the correct steps (stop, don't touch, run away, tell an adult):
+    If they demonstrate the correct steps (stop, don't touch, run away, tell a trusted adult):
     - Praise them enthusiastically
-    - Congratulate them on passing
-    - Call signal_phase_complete(phase: "test_stage_complete")
+    - If this is NOT the last room, you MUST tell them to go to the red circle on the floor and tap anywhere on the screen to continue. This instruction is required every time.
+    - If this IS the last room, just praise them and tell them they did an amazing job — do NOT mention any red circle or tapping the screen
+    - You MUST ALWAYS call signal_phase_complete(phase: "test_stage_complete")
+    - Do not only praise them. If they completed the steps, the tool call AND the red circle instruction (for non-last rooms) are both required every time.
 
     Keep the tone friendly and non-scary throughout.
     """
@@ -157,8 +161,17 @@ final class VoiceCoach: ObservableObject {
     private var verbalPhaseCompletionSignaled = false
     private var testingStageCompletionSignaled = false
     private var pendingTestingStageInstruction: String?
+    private var pendingTestingIntroScenario: String?
+    private var pendingTestingResetFollowupInstruction: String?
+    private var waitingForTestingScenario = false
     private var pendingActOutInstruction: String?           // Injected into LLM when Phase 2 begins
     private var shouldEnableTapAfterCurrentPlayback = false
+    private var activeAudioConversationID = UUID()
+    private var thinkingWatchdogTask: Task<Void, Never>?
+    private var thinkingWatchdogToken = UUID()
+    private var activeTurnKind: String?
+    private var lastTestingIntroScenario: String?
+    private var testingIntroRetryCount = 0
 
     // Unique instance identifier for debugging
     private let instanceID: String
@@ -263,6 +276,7 @@ final class VoiceCoach: ObservableObject {
 
     /// Stop any ongoing LLM streaming, mic input, and audio playback.
     private func interruptLLMAndTTS() {
+        cancelThinkingWatchdog()
         cancelStream()
         liveAudio.stop()
         LiveMicController.shared.stop()
@@ -270,13 +284,21 @@ final class VoiceCoach: ObservableObject {
         isTurnInFlight = false
         isConversationActive = false
         micStoppedForCurrentTurn = false
+        activeTurnKind = nil
     }
 
     func startSession() {
         // Reset completion flags for new session
         trainingCompletionSignaled = false
         verbalPhaseCompletionSignaled = false
+        testingStageCompletionSignaled = false
         pendingActOutInstruction = nil
+        pendingTestingIntroScenario = nil
+        pendingTestingStageInstruction = nil
+        pendingTestingResetFollowupInstruction = nil
+        waitingForTestingScenario = false
+        testingIntroRetryCount = 0
+        lastTestingIntroScenario = nil
 
         // Configure audio session on background thread to avoid blocking AR frame delivery
         Task.detached(priority: .userInitiated) {
@@ -305,12 +327,27 @@ final class VoiceCoach: ObservableObject {
     }
 
     func stopSession() {
+        cancelThinkingWatchdog()
         LiveMicController.shared.stop()
         cancelStream()
         liveAudio.stop()
         live.shutdown()
+        llmActive = false
+        isTurnInFlight = false
         isConversationActive = false
         micStoppedForCurrentTurn = false
+        isProcessingResetInstruction = false
+        trainingCompletionSignaled = false
+        verbalPhaseCompletionSignaled = false
+        testingStageCompletionSignaled = false
+        pendingActOutInstruction = nil
+        pendingTestingIntroScenario = nil
+        pendingTestingStageInstruction = nil
+        pendingTestingResetFollowupInstruction = nil
+        waitingForTestingScenario = false
+        shouldEnableTapAfterCurrentPlayback = false
+        activeAudioConversationID = UUID()
+        activeTurnKind = nil
         state = .idle
     }
 
@@ -332,18 +369,78 @@ final class VoiceCoach: ObservableObject {
             return false
         }
         isTurnInFlight = true
+        activeTurnKind = kind
         print("🧵 [VC] \(kind) → LLM:\n\(prompt)")
+        armThinkingWatchdog(for: kind)
         return true
+    }
+
+    private func armThinkingWatchdog(for kind: String) {
+        thinkingWatchdogTask?.cancel()
+        let token = UUID()
+        thinkingWatchdogToken = token
+
+        guard isTestingMode, kind == "testing-intro" else { return }
+
+        thinkingWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard let self else { return }
+            guard !Task.isCancelled else { return }
+            guard self.thinkingWatchdogToken == token else { return }
+            guard self.state == .thinking else { return }
+            guard self.activeTurnKind == kind else { return }
+            guard let scenarioText = self.lastTestingIntroScenario else { return }
+
+            print("⏱️ [VC] testing-intro watchdog fired after 10s in thinking state")
+            self.cancelThinkingWatchdog()
+            self.cancelStream()
+            self.liveAudio.stop()
+            LiveMicController.shared.stop()
+            self.activeAudioConversationID = UUID()
+            self.isConversationActive = false
+            self.isTurnInFlight = false
+            self.micStoppedForCurrentTurn = false
+            self.llmActive = false
+
+            if self.testingIntroRetryCount < 1 {
+                self.testingIntroRetryCount += 1
+                print("🔁 [VC] Retrying testing intro after watchdog recovery")
+                self.beginTestingIntro(scenarioText: scenarioText)
+            } else {
+                print("⚠️ [VC] Testing intro retry limit reached; leaving coach idle")
+                self.state = .idle
+            }
+        }
+    }
+
+    private func cancelThinkingWatchdog() {
+        thinkingWatchdogTask?.cancel()
+        thinkingWatchdogTask = nil
+        thinkingWatchdogToken = UUID()
     }
 
     /// Play a short, scripted intro via the Live model, then hand off to Live mic streaming.
     private func scriptedIntro() {
         Task { @MainActor in
+            // If a testing intro is already in flight (started by sendTestingStageInstruction
+            // before scriptedIntro ran due to audio-config race), don't interrupt it.
+            if isTestingMode && activeTurnKind == "testing-intro" && isTurnInFlight {
+                return
+            }
+
             interruptLLMAndTTS()
 
-            // Testing mode: skip the generic intro and go straight into the room scenario
+            // Testing mode: wait for the room scenario before starting anything.
+            // `sendTestingStageInstruction` will kick off `beginTestingIntro()` using live.stream()
+            // so the model is guaranteed to speak the opening line.
             if isTestingMode {
-                resumeListening()
+                if let pendingScenario = pendingTestingIntroScenario {
+                    pendingTestingIntroScenario = nil
+                    waitingForTestingScenario = false
+                    beginTestingIntro(scenarioText: pendingScenario)
+                    return
+                }
+                waitingForTestingScenario = true
                 return
             }
 
@@ -351,11 +448,16 @@ final class VoiceCoach: ObservableObject {
             let userText = """
             You are starting Phase 1 (Verbal Recitation). \
             Greet the child warmly and say something like: \
-            "Hi there! We're going to do a safety practice today. Do you know the four safety rules for what to do if you find a gun?" \
+            "Hi there! Today, we're going to practice what to do if you ever find a gun. Do you know the four safety rules for what to do if you find a gun?" \
             Wait for their answer. \
             If they say yes, ask them to tell you all four rules. \
             If they say no or are unsure, go through each rule one at a time and ask them to repeat each one back. \
-            When all four rules are done, tell them to go back to the red start marker and say that when they are ready to begin the act-out, they should tap the screen to start.
+            When all four rules are done and the child has practiced the tell-adult phrase, do these steps IN ORDER: \
+            (1) Praise them warmly. \
+            (2) Call signal_phase_complete(phase: "verbal_phase_complete") — YOU MUST CALL THIS TOOL BEFORE SPEAKING. \
+            (3) Then tell them to go to the red start marker and tap the screen when ready. \
+            SELF-CHECK: If the child reports there is no red start marker, or that tapping the screen does nothing, \
+            call signal_phase_complete(phase: "verbal_phase_complete") again immediately — it means you forgot step 2.
             """
 
             // Log + guard against duplicate sends
@@ -414,16 +516,189 @@ final class VoiceCoach: ObservableObject {
         )
     }
 
+    /// Handlers for the testing-mode intro stream (one opening line, then hands off to silent listening).
+    private func testingIntroHandlers() -> GeminiFlashLiveClient.Handlers {
+        GeminiFlashLiveClient.Handlers(
+            onOpen: { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.llmActive = true
+                    self.liveAudio.resetForNewTurn()
+                    self.append("\nCoach: ")
+                }
+            },
+            onTextDelta: { [weak self] chunk in
+                Task { @MainActor in
+                    self?.append(chunk)
+                }
+            },
+            onAudioReady: { [weak self] data, rate in
+                Task { @MainActor in self?.playLiveAudio(data: data, sampleRate: rate) }
+            },
+            onDone: { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.llmActive = false
+                    self.isTurnInFlight = false
+                    // Wait for intro audio to finish, then start silent observation
+                    self.liveAudio.onPlaybackComplete { [weak self] in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            print("🎬 [VC] Testing intro complete — starting silent observation")
+                            self.resumeListening()
+                        }
+                    }
+                }
+            },
+            onError: { [weak self] err in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.llmActive = false
+                    self.isTurnInFlight = false
+                    self.append("\n[error] \(err.localizedDescription)")
+                    self.liveAudio.stop()
+                    self.resumeListening()
+                }
+            }
+        )
+    }
+
+    /// Handlers for model-initiated testing prompts that should speak first, then
+    /// return to silent observation. Unlike `audioConversationHandlers()`, this does
+    /// not reopen the mic on `onOpen`, which can suppress the prompt entirely.
+    private func testingPromptThenResumeHandlers(doneLog: String, autoSignalStageComplete: Bool = false) -> GeminiFlashLiveClient.Handlers {
+        GeminiFlashLiveClient.Handlers(
+            onOpen: { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.llmActive = true
+                    self.liveAudio.resetForNewTurn()
+                    self.append("\nCoach: ")
+                }
+            },
+            onTextDelta: { [weak self] chunk in
+                Task { @MainActor in
+                    self?.append(chunk)
+                }
+            },
+            onAudioReady: { [weak self] data, rate in
+                Task { @MainActor in
+                    self?.playLiveAudio(data: data, sampleRate: rate)
+                }
+            },
+            onDone: { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.llmActive = false
+                    self.isTurnInFlight = false
+                    self.liveAudio.onPlaybackComplete { [weak self] in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            print(doneLog)
+                            if self.shouldEnableTapAfterCurrentPlayback {
+                                self.shouldEnableTapAfterCurrentPlayback = false
+                                NotificationCenter.default.post(
+                                    name: .arCommand,
+                                    object: nil,
+                                    userInfo: [BusKey.arg: "enableTapAfterSpeech"]
+                                )
+                                LiveMicController.shared.stop()
+                                self.state = .idle
+                                return
+                            }
+
+                            if !self.testingStageCompletionSignaled && autoSignalStageComplete {
+                                print("⚠️ [VC] LLM did not call signal_phase_complete — auto-signaling stage complete")
+                                self.testingStageCompletionSignaled = true
+                                NotificationCenter.default.post(name: .testingStageComplete, object: nil)
+                            }
+
+                            if self.testingStageCompletionSignaled {
+                                print("✅ [VC] testing stage complete — staying idle until the next room starts")
+                                LiveMicController.shared.stop()
+                                self.cancelStream()
+                                self.activeAudioConversationID = UUID()
+                                self.isConversationActive = false
+                                self.isTurnInFlight = false
+                                self.micStoppedForCurrentTurn = false
+                                self.state = .idle
+                                return
+                            }
+
+                            self.resumeListening()
+                        }
+                    }
+                }
+            },
+            onError: { [weak self] err in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.llmActive = false
+                    self.isTurnInFlight = false
+                    self.append("\n[error] \(err.localizedDescription)")
+                    self.liveAudio.stop()
+                    self.resumeListening()
+                }
+            },
+            onPhaseComplete: { [weak self] phase in
+                guard let self else { return }
+                switch phase {
+                case "test_stage_complete":
+                    guard !self.testingStageCompletionSignaled else { return }
+                    self.testingStageCompletionSignaled = true
+                    print("✅ [VC] test_stage_complete tool called")
+                    // Cancel stream immediately to prevent the LLM from receiving
+                    // the function response and generating a duplicate tool call.
+                    LiveMicController.shared.stop()
+                    self.cancelStream()
+                    self.activeAudioConversationID = UUID()
+                    self.isConversationActive = false
+                    self.isTurnInFlight = false
+                    self.llmActive = false
+                    self.micStoppedForCurrentTurn = false
+                    NotificationCenter.default.post(name: .testingStageComplete, object: nil)
+                case "testing_reset_ready":
+                    print("✅ [VC] testing_reset_ready tool called — will enable tap after audio finishes")
+                    self.shouldEnableTapAfterCurrentPlayback = true
+                    self.isProcessingResetInstruction = false
+                default:
+                    break
+                }
+            }
+        )
+    }
+
+    /// Start the testing intro stream. Uses `live.stream()` to guarantee the model speaks the opening line.
+    private func beginTestingIntro(scenarioText: String) {
+        testingStageCompletionSignaled = false
+        if lastTestingIntroScenario != scenarioText {
+            testingIntroRetryCount = 0
+        }
+        lastTestingIntroScenario = scenarioText
+        let introPrompt = """
+        Begin the scene. Deliver your one natural in-character opening line \
+        that fits the scenario and cues the child into the activity — nothing more.
+
+        Scenario: \(scenarioText)
+        """
+        guard beginTurn(kind: "testing-intro", prompt: introPrompt) else { return }
+        state = .thinking
+        liveHandle = live.stream(userText: introPrompt, handlers: testingIntroHandlers())
+    }
+
     private func cancelStream() {
         liveHandle?.cancel()
         liveHandle = nil
     }
 
     private func audioConversationHandlers() -> GeminiFlashLiveClient.Handlers {
-        GeminiFlashLiveClient.Handlers(
+        let conversationID = UUID()
+
+        return GeminiFlashLiveClient.Handlers(
             onOpen: { [weak self] in
                 Task { @MainActor in
                     guard let self else { return }
+                    self.activeAudioConversationID = conversationID
                     self.llmActive = true
                     self.liveAudio.resetForNewTurn()  // Reset buffer tracking for new turn
                     print("🧵 [VC] audio conversation open → starting mic")
@@ -436,8 +711,6 @@ final class VoiceCoach: ObservableObject {
                     guard let self else { return }
                     print("🟩 [LLM TEXT] \(chunk)")
                     self.append(chunk)
-                    // Phase completion and intent detection is now handled via tool calling
-                    // (signal_phase_complete and trigger_intent) — no text marker parsing needed.
                 }
             },
             onAudioReady: { [weak self] data, rate in
@@ -448,11 +721,19 @@ final class VoiceCoach: ObservableObject {
                 // NOTE: Don't switch to playbackOnly - it kills the AVAudioEngine!
                 // Just stop the mic; the session can stay in duplexVoice mode.
                 Task { @MainActor in
+                    guard self.activeAudioConversationID == conversationID else {
+                        print("⚠️ [VC] Ignoring stale audio chunk from prior conversation")
+                        return
+                    }
                     if !self.micStoppedForCurrentTurn {
                         print("🔇 [VC] Stopping mic - Gemini is responding")
                         self.micStoppedForCurrentTurn = true
                         self.state = .thinking
                     }
+                }
+
+                guard self.activeAudioConversationID == conversationID else {
+                    return
                 }
 
                 // Stop mic on background (now thread-safe)
@@ -466,11 +747,14 @@ final class VoiceCoach: ObservableObject {
             onDone: { [weak self] in
                 Task { @MainActor in
                     guard let self else { return }
+                    guard self.activeAudioConversationID == conversationID else {
+                        print("⚠️ [VC] Ignoring stale onDone from prior conversation")
+                        return
+                    }
                     self.llmActive = false
                     self.isTurnInFlight = false
                     self.isConversationActive = false
                     self.micStoppedForCurrentTurn = false
-                    self.testingStageCompletionSignaled = false
                     print("✅ [VC] audio turn complete (model done sending)")
 
                     // Wait for ALL audio playback to finish
@@ -486,6 +770,21 @@ final class VoiceCoach: ObservableObject {
                                     object: nil,
                                     userInfo: [BusKey.arg: "enableTapAfterSpeech"]
                                 )
+                                LiveMicController.shared.stop()
+                                self.state = .idle
+                                return
+                            }
+
+                            if self.testingStageCompletionSignaled {
+                                print("✅ [VC] testing stage complete — staying idle until the next room starts")
+                                LiveMicController.shared.stop()
+                                self.cancelStream()
+                                self.activeAudioConversationID = UUID()
+                                self.isConversationActive = false
+                                self.isTurnInFlight = false
+                                self.micStoppedForCurrentTurn = false
+                                self.state = .idle
+                                return
                             }
 
                             // Check if training completion was signaled
@@ -515,13 +814,19 @@ final class VoiceCoach: ObservableObject {
             onError: { [weak self] err in
                 Task { @MainActor in
                     guard let self else { return }
+                    guard self.activeAudioConversationID == conversationID else {
+                        print("⚠️ [VC] Ignoring stale audio conversation error: \(err.localizedDescription)")
+                        return
+                    }
                     self.llmActive = false
                     self.isTurnInFlight = false
                     self.isConversationActive = false
                     self.micStoppedForCurrentTurn = false
-                    self.append("\n[error] \(err.localizedDescription)")
                     self.liveAudio.stop()
                     LiveMicController.shared.stop()
+                    print("❌ [VC] Audio conversation error: \(err.localizedDescription) — reconnecting in 1s")
+                    try? await Task.sleep(for: .milliseconds(1000))
+                    self.resumeListening()
                 }
             },
             onPhaseComplete: { [weak self] phase in
@@ -542,7 +847,26 @@ final class VoiceCoach: ObservableObject {
                     guard !self.testingStageCompletionSignaled else { return }
                     self.testingStageCompletionSignaled = true
                     print("✅ [VC] test_stage_complete tool called")
+                    // Immediately stop mic and cancel the stream so the model
+                    // can't start another turn that cuts off the current praise audio.
+                    LiveMicController.shared.stop()
+                    self.cancelStream()
+                    self.activeAudioConversationID = UUID()
+                    self.isConversationActive = false
+                    self.isTurnInFlight = false
+                    self.llmActive = false
+                    self.micStoppedForCurrentTurn = false
+                    // Let buffered audio finish, then go idle
+                    self.liveAudio.onPlaybackComplete { [weak self] in
+                        Task { @MainActor in
+                            self?.state = .idle
+                        }
+                    }
                     NotificationCenter.default.post(name: .testingStageComplete, object: nil)
+                case "testing_reset_ready":
+                    print("✅ [VC] testing_reset_ready tool called — will enable tap after audio finishes")
+                    self.shouldEnableTapAfterCurrentPlayback = true
+                    self.isProcessingResetInstruction = false
                 default:
                     print("⚠️ [VC] Unknown phase from tool: \(phase)")
                 }
@@ -552,6 +876,7 @@ final class VoiceCoach: ObservableObject {
 
     private func playLiveAudio(data: Data, sampleRate: Double) {
         guard !data.isEmpty else { return }
+        cancelThinkingWatchdog()
 
         // Update state on main thread (required for @Published property)
         Task { @MainActor in
@@ -569,6 +894,7 @@ final class VoiceCoach: ObservableObject {
             return
         }
 
+        cancelThinkingWatchdog()
         isConversationActive = true
         state = .listening
 
@@ -590,6 +916,15 @@ final class VoiceCoach: ObservableObject {
                         await self.live.sendText(pending)
                         if self.pendingTestingStageInstruction == pending {
                             self.pendingTestingStageInstruction = nil
+                        }
+                    }
+                }
+                if self.isTestingMode, let pending = self.pendingTestingResetFollowupInstruction {
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(600))
+                        await self.live.sendText(pending)
+                        if self.pendingTestingResetFollowupInstruction == pending {
+                            self.pendingTestingResetFollowupInstruction = nil
                         }
                     }
                 }
@@ -693,7 +1028,7 @@ final class VoiceCoach: ObservableObject {
                 The child ran away from the gun and said: "\(text)"
                 If what they said is a reasonable attempt to tell a trusted adult (e.g. calling for a parent, saying they found a gun, asking for help), \
                 praise them enthusiastically for doing everything correctly on their own, then call signal_phase_complete(phase: "training_complete").
-                If what they said was NOT telling an adult, praise them for running away but ask them what they should say to a grown-up after they run away.
+                If what they said was NOT telling a trusted adult, praise them for running away but ask them: "If you found a gun, what would you say to a trusted adult?"
                 Wait for them to say the tell-adult phrase before calling signal_phase_complete.
                 """
                 LiveMicController.shared.stop()
@@ -719,13 +1054,21 @@ final class VoiceCoach: ObservableObject {
 
     private func handleTransitionToActOut() {
         print("🔀 [VC] handleTransitionToActOut called — storing pendingActOutInstruction")
-        shouldEnableTapAfterCurrentPlayback = true
         // Store as pending — injected into LLM when resumeListening() starts (after verbal audio finishes)
         pendingActOutInstruction = """
         Phase 1 (Verbal Recitation) is now complete, but Phase 2 (Act-Out) has not started yet.
         The child has been told to return to the red start marker and tap the screen when ready.
         Until you receive another system instruction, stay completely silent — do not speak, prompt, or ask anything.
         """
+        // Post enableTapAfterSpeech directly — the model is instructed to stay silent so there is
+        // no audio to wait for. Routing through onPlaybackComplete is fragile here because a stray
+        // audio chunk from the previous turn can orphan the handler before it fires.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            print("🔀 [VC] Enabling tap after act-out transition (no audio expected)")
+            NotificationCenter.default.post(name: .arCommand, object: nil,
+                                            userInfo: [BusKey.arg: "enableTapAfterSpeech"])
+        }
     }
 
     private func handlePromptTellAdultPhrase() {
@@ -736,7 +1079,7 @@ final class VoiceCoach: ObservableObject {
             The child has just physically run away from the gun — excellent safety behavior!
             We are in Phase 2 (Act-Out).
             First, praise them enthusiastically for running away. Then immediately ask:
-            "What would you say to your mom or dad right now?"
+            "If you found a gun, what would you say to a trusted adult?"
             Wait for them to say something like "Mom, I found a gun on the table."
             When they say it (accept any reasonable variant), praise them, then call signal_phase_complete(phase: "training_complete").
             Say nothing more after that.
@@ -762,7 +1105,7 @@ final class VoiceCoach: ObservableObject {
         Task { @MainActor in
             let context = """
             Phase 2 (Act-Out) is starting now.
-            Briefly tell the child to imagine they just walked into a room and saw a gun on a table, and to act out what they would do to stay safe.
+            Briefly tell the child: "Pretend you walk into the room and see a table like this with a gun on it. Practice the steps for how to be safe in this situation."
             Keep it short, natural, and clear. After that instruction, stay silent and let them act it out.
             """
 
@@ -978,20 +1321,23 @@ final class VoiceCoach: ObservableObject {
                     self.liveAudio.onPlaybackComplete { [weak self] in
                         Task { @MainActor in
                             guard let self else { return }
-                            print("✅ [VC \(self.instanceID)] Audio playback complete, enabling tap now")
-
-                            // Enable tap now that speech is actually complete
-                            NotificationCenter.default.post(
-                                name: .arCommand,
-                                object: nil,
-                                userInfo: [BusKey.arg: "enableTapAfterSpeech"]
-                            )
-                            print("📤 [VC \(self.instanceID)] Posted enableTapAfterSpeech - tap now enabled")
-
-                            // Reset flag to allow future reset instructions
-                            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-                            self.isProcessingResetInstruction = false
-                            self.state = .idle
+                            print("✅ [VC \(self.instanceID)] Audio playback complete, reopening mic so the child can repeat the steps")
+                            self.cancelStream()
+                            self.isConversationActive = false
+                            self.isTurnInFlight = false
+                            self.micStoppedForCurrentTurn = false
+                            self.activeAudioConversationID = UUID()
+                            LiveMicController.shared.stop()
+                            self.pendingTestingResetFollowupInstruction = """
+                            The child was just taught the four safety steps after reaching for the gun.
+                            Listen to the child repeat all four steps back to you.
+                            Do not give the steps again unless they are missing one or are stuck.
+                            Do not tell them to go to the red marker yet.
+                            When the child has correctly repeated all four steps, briefly tell them to go to the red circle marker on the floor and tap anywhere on the screen to begin.
+                            After you give that instruction, you MUST call signal_phase_complete(phase: "testing_reset_ready").
+                            Do not call testing_reset_ready before the child has correctly repeated all four steps.
+                            """
+                            self.resumeListening()
                         }
                     }
                 }
@@ -1017,8 +1363,8 @@ final class VoiceCoach: ObservableObject {
         let context = """
         The child has reset and is ready to try again in Phase 2 (Act-Out).
         Acknowledge that they reset successfully.
-        Then tell them to act it out again if they find the gun:
-        stop, do not touch it, run away, and tell an adult.
+        Then tell them to practice the steps again if they find the gun:
+        stop, do not touch it, run away, and tell a trusted adult.
         Be brief, clear, and encouraging.
         """
 
@@ -1049,15 +1395,19 @@ final class VoiceCoach: ObservableObject {
         let context = """
         The child reached for the gun during testing in the \(stageName.lowercased()) scenario.
         Intervene immediately and tell them that was not safe.
-        Have them repeat all four safety steps out loud:
+        Say all four safety steps out loud first so the child can hear the full sequence:
         1. Stop
         2. Don't touch it
         3. Run away
         4. Tell a trusted adult
-        If they miss any step, help them say all four correctly.
-        Then tell them to go back to the red X, and once they are standing on it, tap anywhere on the screen to reset and try the scenario again.
+        Then ask the child to repeat all four steps back to you.
+        IMPORTANT:
+        - After asking them to repeat the steps, stop talking and listen.
+        - Do not say "good job" or move on until the child has had a chance to repeat the steps.
+        - If they miss any step, help them say the full set correctly before moving on.
+        - Do not tell them to go to the red marker or tap the screen in this first response.
         Be firm, calm, and supportive.
-        After giving those instructions, say nothing else until the reset happens.
+        After asking them to repeat the steps, say nothing else until the child responds.
         """
 
         Task { @MainActor in
@@ -1077,7 +1427,7 @@ final class VoiceCoach: ObservableObject {
     func sendTestingPostResetActOut(stageName: String) {
         let context = """
         The child has reset successfully in the \(stageName.lowercased()) scenario.
-        Tell them to walk back to the gun and act out the correct safety steps the right way:
+        Tell them to walk back to the gun and practice the correct safety steps the right way:
         stop, do not touch it, run away, and tell a trusted adult.
         Ask them to do it now.
         Be brief, clear, and encouraging.
@@ -1087,36 +1437,91 @@ final class VoiceCoach: ObservableObject {
         Task { @MainActor in
             LiveMicController.shared.stop()
             liveAudio.stop()
+            cancelStream()
+            isConversationActive = false
+            isTurnInFlight = false
+            micStoppedForCurrentTurn = false
 
             guard beginTurn(kind: "testingPostResetActOut", prompt: context) else {
                 print("⚠️ [VC \(instanceID)] beginTurn returned false, aborting testing post-reset act-out")
                 return
             }
 
-            liveHandle = live.stream(userText: context, handlers: audioConversationHandlers())
+            liveHandle = live.stream(
+                userText: context,
+                handlers: testingPromptThenResumeHandlers(
+                    doneLog: "✅ [VC] Testing post-reset act-out prompt complete — resuming silent observation"
+                )
+            )
         }
     }
 
-    func sendTestingCalledAdultAfterRunAway(stageName: String, text: String) {
+    func sendTestingCalledAdultAfterRunAway(stageName: String, text: String, isLastStage: Bool) {
+        let nextStepInstruction = isLastStage
+            ? "Praise them for doing the steps correctly and tell them they did an amazing job staying safe when encountering guns."
+            : "Praise them for doing the steps correctly, tell them to go to the red circle on the floor and tap anywhere on the screen to continue."
         let context = """
         In the \(stageName.lowercased()) testing scenario, the child already completed the run-away step correctly.
-        After running away, the child said: "\(text)".
-        If that is a reasonable attempt to tell a trusted adult about finding the gun or asking for help, praise them for doing the steps correctly and call signal_phase_complete(phase: "test_stage_complete").
-        If it is not actually telling an adult, praise them for running away and briefly ask what they should say to a trusted adult. Wait for the correct tell-adult phrase before calling signal_phase_complete.
+        The system already determined that the child made a valid tell-an-adult response after running away.
+        \(text.isEmpty ? "" : "Their response was: \"\(text)\".")
+        Do not quiz them again or ask what they should tell a grown up.
+        \(nextStepInstruction) You MUST ALWAYS call signal_phase_complete(phase: "test_stage_complete").
+        Do not only praise them. The completion tool call is required every time in this situation.
         Keep it short and natural.
         """
 
         Task { @MainActor in
+            // Wait for the LLM's current turn to finish — signal_phase_complete often
+            // arrives in a separate message after trigger_intent(calledAdult).
+            // If the LLM already signaled completion, skip the follow-up entirely.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+
+            guard !testingStageCompletionSignaled else {
+                print("⏭️ [VC] calledAdult follow-up skipped — LLM already signaled completion and is praising")
+                return
+            }
+
             LiveMicController.shared.stop()
             liveAudio.stop()
             cancelStream()
+            activeAudioConversationID = UUID()
+            isConversationActive = false
             isTurnInFlight = false
             micStoppedForCurrentTurn = false
 
             try? await Task.sleep(nanoseconds: 200_000_000)
 
             state = .thinking
-            liveHandle = live.stream(userText: context, handlers: audioConversationHandlers())
+            liveHandle = live.stream(
+                userText: context,
+                handlers: testingPromptThenResumeHandlers(
+                    doneLog: "✅ [VC] Testing called-adult follow-up complete — resuming silent observation",
+                    autoSignalStageComplete: true
+                )
+            )
+        }
+    }
+
+    /// Trigger the model to speak the run-away follow-up prompt after a silence window.
+    /// Uses proper mic-stop + stream pattern so the model responds immediately.
+    func sendRunAwayFollowUp(_ context: String) {
+        Task { @MainActor in
+            LiveMicController.shared.stop()
+            liveAudio.stop()
+            cancelStream()
+            isConversationActive = false
+            isTurnInFlight = false
+            micStoppedForCurrentTurn = false
+
+            try? await Task.sleep(nanoseconds: 200_000_000)
+
+            state = .thinking
+            liveHandle = live.stream(
+                userText: context,
+                handlers: testingPromptThenResumeHandlers(
+                    doneLog: "✅ [VC] Testing run-away follow-up complete — resuming silent observation"
+                )
+            )
         }
     }
 
@@ -1128,7 +1533,7 @@ final class VoiceCoach: ObservableObject {
         The child has reset and is ready to continue Phase 1 (Verbal Recitation).
         Acknowledge that they reset successfully.
         Then ask them to repeat the four safety steps out loud:
-        stop, don't touch, run away, and tell an adult.
+        stop, don't touch, run away, and tell a trusted adult.
         If they only give some of the steps, help them complete all four.
         Be brief, warm, and direct.
         """
@@ -1161,6 +1566,29 @@ final class VoiceCoach: ObservableObject {
             return
         }
 
+        // If testing is idle, start a fresh spoken intro for this room instead of
+        // trying to inject into a conversation that no longer exists.
+        if !isConversationActive && !isTurnInFlight && !llmActive {
+            pendingTestingIntroScenario = nil
+            testingStageCompletionSignaled = false
+            Task { @MainActor in
+                self.beginTestingIntro(scenarioText: text)
+            }
+            return
+        }
+
+        // Session start: kick off the intro stream so the model is forced to speak the opening line.
+        if waitingForTestingScenario {
+            waitingForTestingScenario = false
+            pendingTestingIntroScenario = nil
+            Task { @MainActor in
+                self.beginTestingIntro(scenarioText: text)
+            }
+            return
+        }
+
+
+        // Mid-session stage change: inject context into the active audio conversation.
         let runtimeInstruction = """
         Testing stage instructions (non-optional):
         - Use this exact scenario setup and cover story for the current room only.
@@ -1171,6 +1599,7 @@ final class VoiceCoach: ObservableObject {
         \(text)
         """
 
+        testingStageCompletionSignaled = false
         pendingTestingStageInstruction = runtimeInstruction
 
         Task { @MainActor in

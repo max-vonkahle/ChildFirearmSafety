@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facilitator Script — Protocol #8042</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #1e3554;
+      --navy-light: #2a4a72;
+      --blue-quote: #1a5fa8;
+      --orange: #c85a0a;
+      --yellow-bg: #fffbeb;
+      --yellow-border: #f59e0b;
+      --yellow-text: #78490a;
+      --gray: #6b7280;
+      --green: #166534;
+      --green-bg: #f0fdf4;
+      --green-border: #86efac;
+      --body-bg: #f5f7fa;
+      --card-bg: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --sidebar-w: 260px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--body-bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* ── SIDEBAR ── */
+    #sidebar {
+      width: var(--sidebar-w);
+      background: var(--navy);
+      color: #fff;
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      overflow-y: auto;
+      z-index: 100;
+      padding: 0 0 24px;
+    }
+    #sidebar-header {
+      padding: 20px 16px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+    #sidebar-header h1 { font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; opacity: .9; }
+    #sidebar-header p { font-size: 11px; opacity: .55; margin-top: 4px; }
+    .nav-group { margin-top: 12px; }
+    .nav-group-label {
+      font-size: 10px; font-weight: 700; letter-spacing: .08em;
+      text-transform: uppercase; opacity: .45;
+      padding: 8px 16px 4px;
+    }
+    .nav-link {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 16px;
+      font-size: 12.5px; color: rgba(255,255,255,.75);
+      text-decoration: none; cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: all .15s;
+    }
+    .nav-link:hover { background: rgba(255,255,255,.08); color: #fff; }
+    .nav-link.active { background: rgba(255,255,255,.12); color: #fff; border-left-color: #60a5fa; }
+    .nav-link .badge {
+      margin-left: auto; font-size: 10px; background: rgba(255,255,255,.15);
+      padding: 1px 6px; border-radius: 10px; white-space: nowrap;
+    }
+
+    /* ── MAIN ── */
+    #main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      padding: 32px 40px 80px;
+      max-width: 900px;
+    }
+
+    /* ── PAGE HEADER ── */
+    .page-header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding-bottom: 28px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .page-header h1 { font-size: 26px; font-weight: 800; color: var(--navy); }
+    .page-header .protocol { font-size: 13px; font-style: italic; color: var(--muted); margin-top: 4px; }
+    .page-header .meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+    /* ── LEGEND ── */
+    .legend {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 32px;
+      display: flex; flex-wrap: wrap; gap: 16px;
+    }
+    .legend-title { width: 100%; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+    /* ── SECTION CARD ── */
+    .section-card {
+      background: var(--card-bg);
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      margin-bottom: 28px;
+      overflow: hidden;
+      scroll-margin-top: 24px;
+    }
+    .section-header {
+      background: var(--navy);
+      color: #fff;
+      padding: 14px 20px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .section-header h2 { font-size: 15px; font-weight: 700; }
+    .section-header .timing {
+      background: rgba(255,255,255,.2);
+      padding: 3px 10px; border-radius: 20px;
+      font-size: 12px; font-style: italic; white-space: nowrap;
+    }
+    .section-body { padding: 20px 24px; }
+
+    /* ── PHASE BANNER ── */
+    .phase-banner {
+      background: var(--navy-light);
+      color: #fff;
+      text-align: center;
+      padding: 12px;
+      font-size: 15px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      scroll-margin-top: 24px;
+    }
+
+    /* ── CONTENT ELEMENTS ── */
+    .spoken {
+      font-style: italic;
+      color: var(--blue-quote);
+      font-size: 14.5px;
+      line-height: 1.65;
+      margin: 14px 0;
+      padding-left: 14px;
+      border-left: 3px solid var(--blue-quote);
+    }
+    .action {
+      color: var(--orange);
+      font-weight: 600;
+      font-size: 13.5px;
+      margin: 12px 0;
+      display: flex; align-items: flex-start; gap: 6px;
+    }
+    .action::before { content: "▶"; flex-shrink: 0; margin-top: 1px; }
+    .reminder {
+      background: var(--yellow-bg);
+      border-left: 3px solid var(--yellow-border);
+      color: var(--yellow-text);
+      font-style: italic;
+      font-size: 13px;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      margin: 12px 0;
+      line-height: 1.5;
+    }
+    .timing-note {
+      color: var(--gray);
+      font-style: italic;
+      font-size: 12.5px;
+      text-align: right;
+      margin: 8px 0;
+    }
+    .timing-note::before { content: "⏱ "; }
+    .bullet-list { margin: 10px 0 10px 20px; }
+    .bullet-list li { font-size: 14px; line-height: 1.6; margin-bottom: 4px; }
+    .bullet-list li strong { color: var(--navy); }
+    .divider { border: none; border-top: 1px solid #e5e7eb; margin: 16px 0; }
+
+    /* ── CHECKLIST ── */
+    .checklist { list-style: none; margin: 8px 0; }
+    .checklist li {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 7px 8px; border-radius: 6px;
+      font-size: 14px; line-height: 1.45;
+      transition: background .1s;
+    }
+    .checklist li:hover { background: #f9fafb; }
+    .checklist li input[type="checkbox"] {
+      width: 17px; height: 17px; margin-top: 2px; flex-shrink: 0;
+      accent-color: var(--navy); cursor: pointer;
+    }
+    .checklist li label { cursor: pointer; }
+    .checklist li.checked label { text-decoration: line-through; color: var(--muted); }
+    .checklist-sub { list-style: none; margin: 4px 0 4px 27px; }
+    .checklist-sub li {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 4px 6px; border-radius: 5px;
+      font-size: 13px; color: #374151;
+    }
+    .checklist-sub li::before { content: "–"; color: var(--muted); flex-shrink: 0; margin-top: 1px; }
+
+    /* ── SURVEY LINKS ── */
+    .survey-block {
+      background: #f0f4ff;
+      border: 1px solid #c7d4f5;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 14px 0;
+    }
+    .survey-block h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--navy); margin-bottom: 10px; }
+    .survey-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid #dce8f5;
+    }
+    .survey-row:last-child { border-bottom: none; }
+    .survey-label { font-size: 13px; font-weight: 600; color: var(--navy); min-width: 80px; }
+    .survey-url {
+      flex: 1; font-size: 12px; color: var(--muted);
+      background: #fff; border: 1px solid #d1d5db;
+      border-radius: 5px; padding: 5px 9px;
+      font-family: monospace;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .copy-btn {
+      background: var(--navy); color: #fff;
+      border: none; border-radius: 5px;
+      padding: 5px 12px; font-size: 12px; font-weight: 600;
+      cursor: pointer; white-space: nowrap; transition: background .15s;
+    }
+    .copy-btn:hover { background: var(--navy-light); }
+    .copy-btn.copied { background: #166534; }
+
+    /* ── TIMER ── */
+    .timer-block {
+      display: flex; align-items: center; gap: 10px;
+      background: #f9fafb; border: 1px solid #e5e7eb;
+      border-radius: 8px; padding: 10px 14px; margin: 14px 0;
+    }
+    .timer-display {
+      font-size: 22px; font-weight: 800; font-family: monospace;
+      color: var(--navy); min-width: 70px;
+    }
+    .timer-display.warning { color: #b45309; }
+    .timer-display.expired { color: #991b1b; }
+    .timer-btn {
+      border: none; border-radius: 6px; padding: 6px 14px;
+      font-size: 12.5px; font-weight: 600; cursor: pointer;
+      transition: all .15s;
+    }
+    .timer-start { background: var(--navy); color: #fff; }
+    .timer-start:hover { background: var(--navy-light); }
+    .timer-reset { background: #e5e7eb; color: #374151; }
+    .timer-reset:hover { background: #d1d5db; }
+    .timer-label { font-size: 12px; color: var(--muted); margin-left: 4px; }
+
+    /* ── PROGRESS BAR ── */
+    #progress-bar {
+      position: fixed; top: 0; left: var(--sidebar-w); right: 0;
+      height: 3px; background: #e5e7eb; z-index: 200;
+    }
+    #progress-fill {
+      height: 100%; background: #3b82f6; width: 0%;
+      transition: width .3s;
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      #sidebar { display: none; }
+      #main { margin-left: 0; padding: 20px; }
+      #progress-bar { left: 0; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="progress-bar"><div id="progress-fill"></div></div>
+
+<!-- SIDEBAR -->
+<nav id="sidebar">
+  <div id="sidebar-header">
+    <h1>Facilitator Script</h1>
+    <p>Protocol #8042</p>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Setup</div>
+    <a class="nav-link" onclick="scrollTo('pre-checklist')">Pre-Session Checklist</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Session Start</div>
+    <a class="nav-link" onclick="scrollTo('s1')">S1 · Welcome &amp; Consent <span class="badge">~5 min</span></a>
+    <a class="nav-link" onclick="scrollTo('s2')">S2 · Pre-Task Survey <span class="badge">~5 min</span></a>
+    <a class="nav-link" onclick="scrollTo('s3')">S3 · System Overview <span class="badge">~5 min</span></a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Phase 1 — Training</div>
+    <a class="nav-link" onclick="scrollTo('s4')">S4 · NAO Robot Module <span class="badge">~8 min</span></a>
+    <a class="nav-link" onclick="scrollTo('s5')">S5 · AR Training Module <span class="badge">~7 min</span></a>
+    <a class="nav-link" onclick="scrollTo('transition')">Transition <span class="badge">~2 min</span></a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Phase 2 — Testing</div>
+    <a class="nav-link" onclick="scrollTo('s6')">S6 · AR Simulation <span class="badge">~15 min</span></a>
+    <a class="nav-link" onclick="scrollTo('s7')">S7 · Post Survey <span class="badge">~10 min</span></a>
+    <a class="nav-link" onclick="scrollTo('s8')">S8 · Closing <span class="badge">~3 min</span></a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Wrap-Up</div>
+    <a class="nav-link" onclick="scrollTo('post-checklist')">Post-Session Checklist</a>
+  </div>
+</nav>
+
+<!-- MAIN CONTENT -->
+<main id="main">
+
+  <!-- PAGE HEADER -->
+  <div class="page-header">
+    <h1>Zoom Session Facilitator Script</h1>
+    <p class="protocol">Protocol #8042 — Interactive AI Systems for Firearm Safety Education in Youth</p>
+    <p class="meta">Remote Participant Session (~60 minutes)</p>
+    <p class="meta">Principal Investigator: Payton Przyuski &nbsp;|&nbsp; Faculty Sponsor: Dr. Tariq Iqbal</p>
+  </div>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <div class="legend-title">How to read this script</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1a5fa8"></div> Blue italic = read aloud or closely paraphrase</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#c85a0a"></div> Orange ▶ = action cue (screen-share, send link, etc.)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> Yellow box = internal reminder (do not read aloud)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#9ca3af"></div> Gray = approximate timing</div>
+  </div>
+
+  <!-- PRE-SESSION CHECKLIST -->
+  <div class="section-card" id="pre-checklist">
+    <div class="section-header">
+      <h2>PRE-SESSION CHECKLIST</h2>
+      <span class="timing">Before session</span>
+    </div>
+    <div class="section-body">
+      <div class="reminder">Complete these items at least 15 minutes before the scheduled Zoom session.</div>
+      <ul class="checklist" id="pre-list">
+        <li id="pre-0"><input type="checkbox" id="c-pre-0" onchange="toggleCheck('pre-0','pre')"><label for="c-pre-0">Confirm participant has returned signed consent form via DocuSign</label></li>
+        <li id="pre-1"><input type="checkbox" id="c-pre-1" onchange="toggleCheck('pre-1','pre')"><label for="c-pre-1">Open Zoom (UVA institutional account) — enable waiting room &amp; meeting password</label></li>
+        <li id="pre-2"><input type="checkbox" id="c-pre-2" onchange="toggleCheck('pre-2','pre')"><label for="c-pre-2">Verify Zoom recording is OFF (check recording indicator)</label></li>
+        <li id="pre-3"><input type="checkbox" id="c-pre-3" onchange="toggleCheck('pre-3','pre')"><label for="c-pre-3">Have all prerecorded videos ready and queued:</label></li>
+        <ul class="checklist-sub">
+          <li>Video 1: NAO Robot Instruction Module</li>
+          <li>Video 2: AR Training Module</li>
+          <li>Video 3: AR In-Situ Simulation (3 scenarios)</li>
+        </ul>
+        <li id="pre-4"><input type="checkbox" id="c-pre-4" onchange="toggleCheck('pre-4','pre')"><label for="c-pre-4">Have all four Qualtrics survey links ready to paste in chat:</label></li>
+        <ul class="checklist-sub">
+          <li>Survey #1: Pre-Task Demographics</li>
+          <li>Survey #2: Post-NAO Robot</li>
+          <li>Survey #3: Post-AR Training</li>
+          <li>Survey #4: Post-AR Simulation</li>
+        </ul>
+        <li id="pre-5"><input type="checkbox" id="c-pre-5" onchange="toggleCheck('pre-5','pre')"><label for="c-pre-5">Assign participant their study ID number</label></li>
+        <li id="pre-6"><input type="checkbox" id="c-pre-6" onchange="toggleCheck('pre-6','pre')"><label for="c-pre-6">Test screen-share and audio with a video clip</label></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- SECTION 1 -->
+  <div class="section-card" id="s1">
+    <div class="section-header">
+      <h2>SECTION 1: Welcome &amp; Consent Review</h2>
+      <span class="timing">~5 min</span>
+    </div>
+    <div class="section-body">
+      <div class="action">Admit participant from waiting room</div>
+
+      <div class="spoken">"Hi [Participant Name], thank you so much for taking the time to participate in our study. My name is Payton Przyuski and I'm the Principal Investigator for this project at UVA."</div>
+
+      <div class="spoken">"Before we begin, I want to let you know a few things about how this Zoom session will work:"</div>
+
+      <ul class="bullet-list">
+        <li>This Zoom session is not being recorded.</li>
+        <li>During the session, I'll be screen-sharing prerecorded video demonstrations of our system's modules.</li>
+        <li>You will not receive copies of the recordings.</li>
+        <li>After each demonstration, I'll send you a Qualtrics survey link in the Zoom chat for you to complete.</li>
+        <li>The whole session should take about 60 minutes.</li>
+        <li>You can take breaks at any time, skip any survey questions, or end the session whenever you'd like—no penalty at all.</li>
+      </ul>
+
+      <div class="spoken">"I see that you've already signed the consent form through DocuSign - thank you for that. Just to quickly recap: this study is evaluating a firearm-safety education system designed for children ages 4 to 7. We're gathering expert feedback before any testing with children. Your participation is completely voluntary and all your responses will be de-identified."</div>
+
+      <div class="spoken">"Do you have any questions before we get started?"</div>
+
+      <div class="reminder">Pause and answer any questions. If they haven't signed consent yet, walk them through the DocuSign process now before proceeding.</div>
+
+      <div class="timer-block">
+        <div class="timer-display" id="timer-s1">5:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s1', 5)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s1', 5)">Reset</button>
+        <span class="timer-label">Section timer</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 2 -->
+  <div class="section-card" id="s2">
+    <div class="section-header">
+      <h2>SECTION 2: Pre-Task Survey (Demographics)</h2>
+      <span class="timing">~5 min</span>
+    </div>
+    <div class="section-body">
+      <div class="spoken">"Great. Let's start with a brief background survey. I'm going to drop the link in the Zoom chat now. This covers some demographic and professional background questions. Take your time and let me know when you're done."</div>
+
+      <div class="action">Paste Survey #1 (Demographics) link in Zoom chat</div>
+
+      <div class="survey-block">
+        <h4>Survey #1 — Pre-Task Demographics</h4>
+        <div class="survey-row">
+          <span class="survey-label">Survey #1</span>
+          <span class="survey-url" id="url-s1">https://virginia.az1.qualtrics.com/jfe/form/SV_b1nmZX3L8lqSlD0</span>
+          <button class="copy-btn" onclick="copyLink('url-s1', this)">Copy</button>
+        </div>
+      </div>
+
+      <div class="reminder">Participant's study ID should be pre-filled or communicated to them so they can enter it. Stay available for questions but don't rush them.</div>
+
+      <div class="timing-note">Wait for participant to finish (~5 min)</div>
+
+      <div class="spoken">"Thank you. Now I'm going to give you a quick overview of what you'll be evaluating today, and then we'll jump into the first module."</div>
+
+      <div class="timer-block">
+        <div class="timer-display" id="timer-s2">5:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s2', 5)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s2', 5)">Reset</button>
+        <span class="timer-label">Section timer</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 3 -->
+  <div class="section-card" id="s3">
+    <div class="section-header">
+      <h2>SECTION 3: System Overview &amp; Instructions</h2>
+      <span class="timing">~5 min</span>
+    </div>
+    <div class="section-body">
+      <div class="spoken">"The system we're evaluating has three components, and we'll go through them in order:"</div>
+
+      <ul class="bullet-list">
+        <li><strong>Module 1:</strong> First, a NAO robot that delivers a short firearm-safety lesson to children, teaching them four key steps: Stop, Don't Touch, Run Away, and Tell an Adult.</li>
+        <li><strong>Module 2:</strong> Second, an augmented-reality training environment where children practice those four steps with gesture-based controls and coaching.</li>
+        <li><strong>Module 3:</strong> Third, three realistic AR simulation scenarios where children encounter a firearm in everyday settings and need to apply what they've learned.</li>
+      </ul>
+
+      <div class="spoken">"For each module, I'll screen-share a prerecorded video demonstration. After each video, I'll send you a short Qualtrics survey to complete. We're looking for your expert evaluation of things like age-appropriateness, clarity, ethical considerations, and feasibility."</div>
+
+      <div class="spoken">"Any questions about the overall structure before we begin?"</div>
+
+      <div class="reminder">Pause for questions. Then transition to Phase 1.</div>
+
+      <div class="timer-block">
+        <div class="timer-display" id="timer-s3">5:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s3', 5)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s3', 5)">Reset</button>
+        <span class="timer-label">Section timer</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHASE 1 BANNER -->
+  <div class="phase-banner" id="phase1">PHASE 1: TRAINING PHASE EVALUATION</div>
+
+  <!-- SECTION 4 -->
+  <div class="section-card" id="s4">
+    <div class="section-header">
+      <h2>SECTION 4: NAO Robot Instruction Module</h2>
+      <span class="timing">~8 min</span>
+    </div>
+    <div class="section-body">
+      <div class="spoken">"Alright, let's move into the first module. I'm going to share my screen and play the NAO robot instruction video. This shows the robot delivering a firearm-safety lesson designed for young children. As you watch, think about the instructional clarity, tone, age-appropriateness, and how engaging this would be for a child ages 4 to 7."</div>
+
+      <div class="action">Start screen-share → Play NAO Robot Module video</div>
+
+      <div class="timing-note">Video duration: ~5 min</div>
+
+      <div class="reminder">Let the video play fully without interruption. You can monitor the participant's video feed to check they're engaged.</div>
+
+      <div class="action">Stop screen-share when video ends</div>
+
+      <div class="spoken">"Thank you for watching that. I'm now going to send you a short survey about what you just saw. It covers things like the clarity of the instruction, the robot's tone and pacing, and whether you think it's appropriate for young children."</div>
+
+      <div class="action">Paste Survey #2 (Post-NAO Robot) link in Zoom chat</div>
+
+      <div class="survey-block">
+        <h4>Survey #2 — Post-NAO Robot</h4>
+        <div class="survey-row">
+          <span class="survey-label">Survey #2</span>
+          <span class="survey-url" id="url-s2">https://virginia.az1.qualtrics.com/jfe/form/SV_8w9aFAcCdrpkKJE</span>
+          <button class="copy-btn" onclick="copyLink('url-s2', this)">Copy</button>
+        </div>
+      </div>
+
+      <div class="timing-note">Survey completion: ~3 min</div>
+
+      <div class="reminder">Wait for participant to finish. Stay available for questions.</div>
+
+      <div class="timer-block">
+        <div class="timer-display" id="timer-s4">8:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s4', 8)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s4', 8)">Reset</button>
+        <span class="timer-label">Section timer</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 5 -->
+  <div class="section-card" id="s5">
+    <div class="section-header">
+      <h2>SECTION 5: AR Training Module</h2>
+      <span class="timing">~7 min</span>
+    </div>
+    <div class="section-body">
+      <div class="spoken">"Great, thank you. Let's move on to the second module."</div>
+
+      <div class="spoken">"The next module is the augmented-reality training environment. In this module, children would learn how to use gesture-based controls and practice the four safety steps they just learned from the robot. The video shows a member of our research team demonstrating how a child would interact with the system."</div>
+
+      <div class="spoken">"As you watch, consider the usability, how clear the instructions are, whether the gesture controls seem manageable for young children, and the overall engagement potential."</div>
+
+      <div class="action">Start screen-share → Play AR Training Module video</div>
+
+      <div class="timing-note">Video duration: ~5 min</div>
+
+      <div class="reminder">Let the video play fully.</div>
+
+      <div class="action">Stop screen-share when video ends</div>
+
+      <div class="spoken">"Thanks for watching. I'll now send over the survey for this module."</div>
+
+      <div class="action">Paste Survey #3 (Post-AR Training) link in Zoom chat</div>
+
+      <div class="survey-block">
+        <h4>Survey #3 — Post-AR Training</h4>
+        <div class="survey-row">
+          <span class="survey-label">Survey #3</span>
+          <span class="survey-url" id="url-s3">https://virginia.az1.qualtrics.com/jfe/form/SV_2tzD2CsJW1R97zo</span>
+          <button class="copy-btn" onclick="copyLink('url-s3', this)">Copy</button>
+        </div>
+      </div>
+
+      <div class="timing-note">Survey completion: ~2 min</div>
+
+      <div class="reminder">Wait for participant to finish.</div>
+
+      <div class="timer-block">
+        <div class="timer-display" id="timer-s5">7:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s5', 7)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s5', 7)">Reset</button>
+        <span class="timer-label">Section timer</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRANSITION -->
+  <div class="section-card" id="transition">
+    <div class="section-header" style="background:#4a6fa5;">
+      <h2>TRANSITION: Training → Testing Phase</h2>
+      <span class="timing">~2 min</span>
+    </div>
+    <div class="section-body">
+      <div class="spoken">"Great work - we're now about halfway through. That wraps up the training phase evaluation. Let's take a brief moment before we move on."</div>
+
+      <div class="spoken">"Would you like to take a short break, or are you good to continue?"</div>
+
+      <div class="reminder">Give them a moment. If they want a break, pause for a few minutes.</div>
+
+      <div class="spoken">"The next part is the testing phase. You'll watch three realistic AR simulation scenarios that show how a child would encounter an unsecured firearm while doing everyday tasks—like looking for paper towels or snacks at a friend's house. The system assesses whether the child applies the four safety steps and provides feedback. I'll play all three scenarios, and then you'll complete one final survey at the end."</div>
+    </div>
+  </div>
+
+  <!-- PHASE 2 BANNER -->
+  <div class="phase-banner" id="phase2">PHASE 2: TESTING PHASE EVALUATION</div>
+
+  <!-- SECTION 6 -->
+  <div class="section-card" id="s6">
+    <div class="section-header">
+      <h2>SECTION 6: AR In-Situ Simulation (3 Scenarios)</h2>
+      <span class="timing">~15 min</span>
+    </div>
+    <div class="section-body">
+      <div class="spoken">"Alright, I'm going to share my screen again. This video covers all three simulation scenarios back to back. Each scenario takes about 5 minutes."</div>
+
+      <ul class="bullet-list">
+        <li><strong>Kitchen:</strong> Scenario 1: Kitchen at a friend's house — child looks for paper towels and finds a gun in the cabinet.</li>
+        <li><strong>Bedroom:</strong> Scenario 2: Parent's bedroom at a friend's birthday party — child looks for a wrapped present and finds a gun in the closet.</li>
+        <li><strong>Garage:</strong> Scenario 3: Garage at a friend's house — child looks for snacks and finds an open gun safe.</li>
+      </ul>
+
+      <div class="spoken">"As you watch, pay attention to how realistic the scenarios feel, whether the feedback the system gives is appropriate, the tone escalation when a child makes an incorrect choice, and whether any of this could cause distress in young children."</div>
+
+      <div class="action">Start screen-share → Play AR Simulation video (all 3 scenarios)</div>
+
+      <div class="timing-note">Video duration: ~15 min total</div>
+
+      <div class="reminder">If you have separate video files for each scenario, you can pause between them to briefly check in with the participant. Otherwise let it play through.</div>
+
+      <div style="margin: 10px 0; font-size: 13px; color: #374151;"><strong>Optional between scenarios:</strong></div>
+      <div class="spoken">"That was Scenario [1/2]. Ready for the next one?"</div>
+
+      <div class="action">Stop screen-share after all 3 scenarios end</div>
+
+      <div class="timer-block">
+        <div class="timer-display" id="timer-s6">15:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s6', 15)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s6', 15)">Reset</button>
+        <span class="timer-label">Section timer</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 7 -->
+  <div class="section-card" id="s7">
+    <div class="section-header">
+      <h2>SECTION 7: Post-Simulation Survey</h2>
+      <span class="timing">~10 min</span>
+    </div>
+    <div class="section-body">
+      <div class="spoken">"Thank you for watching all three scenarios. This last survey is the most detailed one. It covers the scenario realism, age-appropriateness, the corrective feedback strategy, potential for emotional distress, and your thoughts on implementation feasibility. Take your time with this one."</div>
+
+      <div class="action">Paste Survey #4 (Post-AR Simulation) link in Zoom chat</div>
+
+      <div class="survey-block">
+        <h4>Survey #4 — Post-AR Simulation</h4>
+        <div class="survey-row">
+          <span class="survey-label">Survey #4</span>
+          <span class="survey-url" id="url-s4">https://virginia.az1.qualtrics.com/jfe/form/SV_8d22wlRFHWH4LCm</span>
+          <button class="copy-btn" onclick="copyLink('url-s4', this)">Copy</button>
+        </div>
+      </div>
+
+      <div class="timing-note">Survey completion: ~10 min</div>
+
+      <div class="reminder">This is the longest survey. Stay patient and available for questions. Don't rush them.</div>
+
+      <div class="timer-block">
+        <div class="timer-display" id="timer-s7">10:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s7', 10)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s7', 10)">Reset</button>
+        <span class="timer-label">Section timer</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 8 -->
+  <div class="section-card" id="s8">
+    <div class="section-header">
+      <h2>SECTION 8: Closing &amp; Thank You</h2>
+      <span class="timing">~3 min</span>
+    </div>
+    <div class="section-body">
+      <div class="spoken">"That's everything! Thank you so much for your time and expertise today. Your feedback is incredibly valuable and will directly help us refine the system before we move to any testing with children."</div>
+
+      <div class="spoken">"Just as a reminder, all of your responses are de-identified and linked only by a study ID number. The link file connecting your name to your ID will be destroyed once data collection is complete."</div>
+
+      <div class="spoken">"Do you have any final questions or comments about the study, the system, or anything we covered today?"</div>
+
+      <div class="reminder">Answer any final questions.</div>
+
+      <div class="spoken">"If anything comes to mind later, feel free to reach out to me at hzy8kg@virginia.edu, or to our Faculty Sponsor, Dr. Tariq Iqbal, at ti3fe@virginia.edu. Thank you again, and have a great rest of your day!"</div>
+
+      <div class="action">End the Zoom session</div>
+    </div>
+  </div>
+
+  <!-- POST-SESSION CHECKLIST -->
+  <div class="section-card" id="post-checklist">
+    <div class="section-header">
+      <h2>POST-SESSION CHECKLIST</h2>
+      <span class="timing">After session</span>
+    </div>
+    <div class="section-body">
+      <ul class="checklist">
+        <li id="post-0"><input type="checkbox" id="c-post-0" onchange="toggleCheck('post-0','post')"><label for="c-post-0">Confirm all 4 Qualtrics survey responses were submitted for this participant</label></li>
+        <li id="post-1"><input type="checkbox" id="c-post-1" onchange="toggleCheck('post-1','post')"><label for="c-post-1">Verify Zoom session was NOT recorded (check local &amp; cloud recordings)</label></li>
+        <li id="post-2"><input type="checkbox" id="c-post-2" onchange="toggleCheck('post-2','post')"><label for="c-post-2">Log participant completion in your tracking spreadsheet</label></li>
+        <li id="post-3"><input type="checkbox" id="c-post-3" onchange="toggleCheck('post-3','post')"><label for="c-post-3">Update study ID link file with session date</label></li>
+        <li id="post-4"><input type="checkbox" id="c-post-4" onchange="toggleCheck('post-4','post')"><label for="c-post-4">Clear Zoom chat history</label></li>
+        <li id="post-5"><input type="checkbox" id="c-post-5" onchange="toggleCheck('post-5','post')"><label for="c-post-5">Note any issues, technical difficulties, or participant comments for your records</label></li>
+      </ul>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  // ── CHECKLIST PERSISTENCE ──
+  function toggleCheck(id, group) {
+    const el = document.getElementById(id);
+    const cb = el.querySelector('input[type="checkbox"]');
+    if (cb.checked) el.classList.add('checked'); else el.classList.remove('checked');
+    saveChecks();
+  }
+  function saveChecks() {
+    const checks = {};
+    document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      checks[cb.id] = cb.checked;
+    });
+    localStorage.setItem('facilitator_checks', JSON.stringify(checks));
+  }
+  function loadChecks() {
+    const saved = localStorage.getItem('facilitator_checks');
+    if (!saved) return;
+    const checks = JSON.parse(saved);
+    Object.entries(checks).forEach(([id, checked]) => {
+      const cb = document.getElementById(id);
+      if (cb) {
+        cb.checked = checked;
+        const li = cb.closest('li');
+        if (li && checked) li.classList.add('checked');
+      }
+    });
+  }
+
+  // ── COPY LINK ──
+  function copyLink(spanId, btn) {
+    const text = document.getElementById(spanId).textContent.trim();
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+    });
+  }
+
+  // ── TIMERS ──
+  const timers = {};
+  function startTimer(id, minutes) {
+    if (timers[id] && timers[id].interval) return; // already running
+    const display = document.getElementById('timer-' + id);
+    if (!timers[id]) timers[id] = { remaining: minutes * 60 };
+    timers[id].interval = setInterval(() => {
+      timers[id].remaining--;
+      updateTimerDisplay(id);
+      if (timers[id].remaining <= 0) {
+        clearInterval(timers[id].interval);
+        timers[id].interval = null;
+      }
+    }, 1000);
+    const btn = display.parentElement.querySelector('.timer-start');
+    btn.textContent = 'Pause';
+    btn.onclick = () => pauseTimer(id, minutes, btn);
+  }
+  function pauseTimer(id, minutes, btn) {
+    clearInterval(timers[id].interval);
+    timers[id].interval = null;
+    btn.textContent = 'Resume';
+    btn.onclick = () => { btn.textContent = 'Pause'; btn.onclick = () => pauseTimer(id, minutes, btn); startTimer(id, minutes); };
+  }
+  function resetTimer(id, minutes) {
+    if (timers[id] && timers[id].interval) clearInterval(timers[id].interval);
+    timers[id] = { remaining: minutes * 60 };
+    updateTimerDisplay(id);
+    const display = document.getElementById('timer-' + id);
+    const btn = display.parentElement.querySelector('.timer-start');
+    btn.textContent = 'Start';
+    btn.onclick = () => startTimer(id, minutes);
+  }
+  function updateTimerDisplay(id) {
+    const display = document.getElementById('timer-' + id);
+    if (!display || !timers[id]) return;
+    const r = Math.max(0, timers[id].remaining);
+    const m = Math.floor(r / 60);
+    const s = r % 60;
+    display.textContent = m + ':' + String(s).padStart(2, '0');
+    display.className = 'timer-display';
+    if (r <= 0) display.classList.add('expired');
+    else if (r <= 60) display.classList.add('warning');
+  }
+
+  // ── SCROLL NAV ──
+  function scrollTo(id) {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ── PROGRESS BAR ──
+  window.addEventListener('scroll', () => {
+    const doc = document.documentElement;
+    const scrolled = doc.scrollTop / (doc.scrollHeight - doc.clientHeight);
+    document.getElementById('progress-fill').style.width = (scrolled * 100) + '%';
+  });
+
+  // ── ACTIVE NAV HIGHLIGHT ──
+  const sections = ['pre-checklist','s1','s2','s3','s4','s5','transition','s6','s7','s8','post-checklist'];
+  window.addEventListener('scroll', () => {
+    let active = null;
+    sections.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.getBoundingClientRect().top <= 80) active = id;
+    });
+    document.querySelectorAll('.nav-link').forEach(a => a.classList.remove('active'));
+    if (active) {
+      document.querySelectorAll('.nav-link').forEach(a => {
+        if (a.getAttribute('onclick') && a.getAttribute('onclick').includes("'" + active + "'")) {
+          a.classList.add('active');
+        }
+      });
+    }
+  });
+
+  // ── INIT ──
+  loadChecks();
+</script>
+</body>
+</html>

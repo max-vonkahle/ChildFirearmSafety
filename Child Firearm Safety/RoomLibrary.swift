@@ -22,9 +22,9 @@ enum TestingStage: String, CaseIterable, Codable {
         case .kitchen:
             return "The child is at their friend's house and was asked to go to the kitchen to find cookies for a snack."
         case .garage:
-            return "The child is at their friend's house and was asked to go to the garage to find a toy."
+            return "The child is at their friend's house and was asked to go to the garage to look for a toy their friend lost."
         case .bedroom:
-            return "The child is playing hide and seek and decides to hide in the bedroom next to the bed."
+            return "The child is playing hide and seek at a friend's house and decides to hide in the bedroom next to the bed."
         }
     }
 
@@ -33,9 +33,9 @@ enum TestingStage: String, CaseIterable, Codable {
         case .kitchen:
             return "You're in your friend's kitchen. They asked you to find the cookies for a snack. Look around - what do you see?"
         case .garage:
-            return "You're in your friend's garage. They asked you to find a toy. Look around - what do you see?"
+            return "You're in your friend's garage. They asked you to look for a toy they lost. Look around - what do you see?"
         case .bedroom:
-            return "You're playing hide and seek, and you decide to hide in the bedroom next to the bed. Look around - what do you see?"
+            return "You're playing hide and seek at a friend's house, and you decide to hide in the bedroom next to the bed. Look around - what do you see?"
         }
     }
 
@@ -147,6 +147,8 @@ enum RoomLibrary {
         let backWallTransform: [Float]  // 16 floats for 4x4 matrix
         let wallNormal: [Float]?  // 4 floats for wall normal (optional for backwards compatibility)
         let assetTransforms: [String: [Float]]?  // Asset name -> transform matrix (optional)
+        let startPositionTransform: [Float]?  // Saved floor/start spot transform
+        let startDirectionTransform: [Float]?  // Saved facing direction at the start spot
         let startCameraTransform: [Float]?  // Saved device pose for stage reset alignment
         let createdAt: Date
 
@@ -154,9 +156,11 @@ enum RoomLibrary {
             transform: simd_float4x4,
             wallNormal: SIMD4<Float>? = nil,
             assets: [String: simd_float4x4]? = nil,
+            startPositionTransform: simd_float4x4? = nil,
+            startDirectionTransform: simd_float4x4? = nil,
             startCameraTransform: simd_float4x4? = nil
         ) {
-            self.schemaVersion = 2
+            self.schemaVersion = 3
             // Flatten matrix to array
             self.backWallTransform = [
                 transform.columns.0.x, transform.columns.0.y, transform.columns.0.z, transform.columns.0.w,
@@ -182,6 +186,26 @@ enum RoomLibrary {
                 self.assetTransforms = flattened
             } else {
                 self.assetTransforms = nil
+            }
+            if let startPositionTransform {
+                self.startPositionTransform = [
+                    startPositionTransform.columns.0.x, startPositionTransform.columns.0.y, startPositionTransform.columns.0.z, startPositionTransform.columns.0.w,
+                    startPositionTransform.columns.1.x, startPositionTransform.columns.1.y, startPositionTransform.columns.1.z, startPositionTransform.columns.1.w,
+                    startPositionTransform.columns.2.x, startPositionTransform.columns.2.y, startPositionTransform.columns.2.z, startPositionTransform.columns.2.w,
+                    startPositionTransform.columns.3.x, startPositionTransform.columns.3.y, startPositionTransform.columns.3.z, startPositionTransform.columns.3.w
+                ]
+            } else {
+                self.startPositionTransform = nil
+            }
+            if let startDirectionTransform {
+                self.startDirectionTransform = [
+                    startDirectionTransform.columns.0.x, startDirectionTransform.columns.0.y, startDirectionTransform.columns.0.z, startDirectionTransform.columns.0.w,
+                    startDirectionTransform.columns.1.x, startDirectionTransform.columns.1.y, startDirectionTransform.columns.1.z, startDirectionTransform.columns.1.w,
+                    startDirectionTransform.columns.2.x, startDirectionTransform.columns.2.y, startDirectionTransform.columns.2.z, startDirectionTransform.columns.2.w,
+                    startDirectionTransform.columns.3.x, startDirectionTransform.columns.3.y, startDirectionTransform.columns.3.z, startDirectionTransform.columns.3.w
+                ]
+            } else {
+                self.startDirectionTransform = nil
             }
             if let startCameraTransform {
                 self.startCameraTransform = [
@@ -234,6 +258,26 @@ enum RoomLibrary {
                 SIMD4<Float>(m[12], m[13], m[14], m[15])
             )
         }
+
+        func getStartPositionTransform() -> simd_float4x4? {
+            guard let m = startPositionTransform, m.count == 16 else { return nil }
+            return simd_float4x4(
+                SIMD4<Float>(m[0], m[1], m[2], m[3]),
+                SIMD4<Float>(m[4], m[5], m[6], m[7]),
+                SIMD4<Float>(m[8], m[9], m[10], m[11]),
+                SIMD4<Float>(m[12], m[13], m[14], m[15])
+            )
+        }
+
+        func getStartDirectionTransform() -> simd_float4x4? {
+            guard let m = startDirectionTransform, m.count == 16 else { return nil }
+            return simd_float4x4(
+                SIMD4<Float>(m[0], m[1], m[2], m[3]),
+                SIMD4<Float>(m[4], m[5], m[6], m[7]),
+                SIMD4<Float>(m[8], m[9], m[10], m[11]),
+                SIMD4<Float>(m[12], m[13], m[14], m[15])
+            )
+        }
     }
 
     static func savedTestingRooms() -> [String] {
@@ -258,6 +302,8 @@ enum RoomLibrary {
         roomId: String,
         worldMap: ARWorldMap,
         assets: [String: simd_float4x4],
+        startPositionTransform: simd_float4x4? = nil,
+        startDirectionTransform: simd_float4x4? = nil,
         startCameraTransform: simd_float4x4? = nil
     ) {
         let id = roomId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -282,6 +328,8 @@ enum RoomLibrary {
                 transform: matrix_identity_float4x4,
                 wallNormal: nil,
                 assets: assets,
+                startPositionTransform: startPositionTransform,
+                startDirectionTransform: startDirectionTransform,
                 startCameraTransform: startCameraTransform
             )
             let assetsData = try JSONEncoder().encode(testingData)
@@ -293,7 +341,13 @@ enum RoomLibrary {
         }
     }
 
-    static func loadTestingRoom(roomId: String) -> (worldMap: ARWorldMap, assets: [String: simd_float4x4], startCameraTransform: simd_float4x4?)? {
+    static func loadTestingRoom(roomId: String) -> (
+        worldMap: ARWorldMap,
+        assets: [String: simd_float4x4],
+        startCameraTransform: simd_float4x4?,
+        startPositionTransform: simd_float4x4?,
+        startDirectionTransform: simd_float4x4?
+    )? {
         let id = roomId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !id.isEmpty else {
             print("[RoomLibrary] ❌ Empty roomId provided")
@@ -324,20 +378,48 @@ enum RoomLibrary {
             // Load asset transforms
             var assets: [String: simd_float4x4] = [:]
             var startCameraTransform: simd_float4x4?
+            var startPositionTransform: simd_float4x4?
+            var startDirectionTransform: simd_float4x4?
             if fm.fileExists(atPath: assetsURL.path) {
                 let assetsData = try Data(contentsOf: assetsURL)
                 let decoded = try JSONDecoder().decode(TestingRoomData.self, from: assetsData)
                 assets = decoded.getAssetTransforms()
-                startCameraTransform = decoded.getStartCameraTransform()
+                startPositionTransform = decoded.getStartPositionTransform()
+                startDirectionTransform = decoded.getStartDirectionTransform()
+                let legacyStartCameraTransform = decoded.getStartCameraTransform()
+                if startPositionTransform == nil {
+                    startPositionTransform = legacyStartCameraTransform
+                }
+                if startDirectionTransform == nil {
+                    startDirectionTransform = legacyStartCameraTransform
+                }
+                startCameraTransform = composeStartAlignmentTransform(
+                    startPositionTransform: startPositionTransform,
+                    startDirectionTransform: startDirectionTransform,
+                    legacyStartCameraTransform: legacyStartCameraTransform
+                )
             }
 
             // print("[RoomLibrary] ✅ Loaded testing room '\(id)' with ARWorldMap and \(assets.count) assets")
             // print("[RoomLibrary] 📋 Asset keys: \(assets.keys.sorted())")
-            return (worldMap, assets, startCameraTransform)
+            return (worldMap, assets, startCameraTransform, startPositionTransform, startDirectionTransform)
         } catch {
             print("[RoomLibrary] ❌ Failed to load testing room '\(id)': \(error.localizedDescription)")
             return nil
         }
+    }
+
+    static func composeStartAlignmentTransform(
+        startPositionTransform: simd_float4x4?,
+        startDirectionTransform: simd_float4x4?,
+        legacyStartCameraTransform: simd_float4x4?
+    ) -> simd_float4x4? {
+        if let startPositionTransform, let startDirectionTransform {
+            var combined = startDirectionTransform
+            combined.columns.3 = startPositionTransform.columns.3
+            return combined
+        }
+        return legacyStartCameraTransform
     }
 
     static func calculateGunTransform(roomTransform: simd_float4x4, relativeOffset: SIMD3<Float>, yawOffset: Float = 0) -> simd_float4x4 {

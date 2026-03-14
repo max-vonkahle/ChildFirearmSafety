@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Session Presentation (Branching) — Protocol #8042</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #1e3554;
+      --navy-light: #2a4a72;
+      --accent: #3b82f6;
+      --green: #22c55e;
+      --red: #ef4444;
+      --purple: #a855f7;
+      --amber: #f59e0b;
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; }
+    #app { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── TOP BAR ── */
+    #topbar { display: flex; align-items: center; justify-content: space-between; background: var(--navy); padding: 0 24px; height: 52px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+    #topbar-title { font-size: 13px; font-weight: 700; color: #fff; }
+    #topbar-subtitle { font-size: 11px; color: rgba(255,255,255,.5); }
+    #step-indicator { font-size: 12px; color: rgba(255,255,255,.6); background: rgba(255,255,255,.1); padding: 4px 12px; border-radius: 20px; }
+
+    /* ── STEP PROGRESS ── */
+    #step-progress { display: flex; background: var(--card); padding: 0 24px; height: 44px; align-items: center; flex-shrink: 0; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    #step-progress::-webkit-scrollbar { display: none; }
+    .step-pill { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--muted); cursor: pointer; transition: all .2s; flex-shrink: 0; }
+    .step-pill:hover { color: var(--text); }
+    .step-pill.active { background: var(--accent); color: #fff; }
+    .step-pill.done { color: var(--green); }
+    .step-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+    .step-arrow { color: var(--border); font-size: 12px; margin: 0 2px; flex-shrink: 0; }
+
+    /* ── SLIDE AREA ── */
+    #slide-area { flex: 1; overflow: hidden; position: relative; }
+    .slide { display: none; height: 100%; padding: 28px 48px 16px; overflow-y: auto; animation: fadeIn .25s ease; }
+    .slide.active { display: flex; flex-direction: column; justify-content: center; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ── SHARED SLIDE TYPES ── */
+    .slide-cover { text-align: center; align-items: center; }
+    .cover-badge { background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; padding: 5px 14px; border-radius: 20px; display: inline-block; margin-bottom: 20px; }
+    .slide-cover h1 { font-size: 38px; font-weight: 800; line-height: 1.15; margin-bottom: 12px; }
+    .slide-cover h1 span { color: var(--accent); }
+    .slide-cover .sub { font-size: 15px; color: var(--muted); max-width: 520px; line-height: 1.6; margin: 0 auto 28px; }
+    .slide-cover .meta { font-size: 13px; color: var(--muted); }
+    .overview-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 20px; max-width: 560px; width: 100%; margin-left: auto; margin-right: auto; }
+    .overview-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px 20px; }
+    .overview-card .num { font-size: 28px; font-weight: 800; color: var(--accent); margin-bottom: 8px; }
+    .overview-card h3 { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+    .overview-card p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+    .phase-intro { align-items: center; text-align: center; justify-content: center; }
+    .phase-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); margin-bottom: 10px; }
+    .phase-intro h2 { font-size: 32px; font-weight: 800; margin-bottom: 12px; }
+    .phase-intro p { font-size: 15px; color: var(--muted); max-width: 480px; line-height: 1.6; }
+    .slide-survey { align-items: center; text-align: center; justify-content: center; gap: 24px; }
+    .slide-wait { align-items: center; text-align: center; justify-content: center; gap: 20px; }
+    .slide-wait h2, .slide-survey h2 { font-size: 26px; font-weight: 800; }
+    .slide-wait p, .slide-survey p { font-size: 14px; color: var(--muted); max-width: 460px; line-height: 1.6; }
+    .survey-icon { font-size: 52px; }
+    .survey-link-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 12px; width: 100%; max-width: 520px; }
+    .survey-link-url { flex: 1; font-family: monospace; font-size: 12.5px; color: var(--muted); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .survey-copy-btn { background: var(--accent); color: #fff; border: none; border-radius: 7px; padding: 8px 18px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: all .15s; flex-shrink: 0; }
+    .survey-copy-btn:hover { background: #2563eb; }
+    .survey-copy-btn.copied { background: #16a34a; }
+    .survey-note { font-size: 12px; color: var(--muted); font-style: italic; }
+    .slide-closing { align-items: center; text-align: center; justify-content: center; gap: 16px; }
+    .closing-check { font-size: 60px; }
+    .slide-closing h2 { font-size: 30px; font-weight: 800; }
+    .slide-closing p { font-size: 14px; color: var(--muted); max-width: 480px; line-height: 1.6; }
+    .contact-block { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 24px; font-size: 13px; line-height: 1.8; color: var(--muted); text-align: left; }
+    .contact-block a { color: var(--accent); text-decoration: none; }
+    .slide-section-h { font-size: 24px; font-weight: 800; margin-bottom: 6px; text-align: center; }
+    .slide-section-sub { font-size: 14px; color: var(--muted); margin-bottom: 20px; line-height: 1.5; max-width: 560px; text-align: center; margin-left: auto; margin-right: auto; }
+
+    /* ── BOTTOM NAV ── */
+    #bottom-nav { display: flex; align-items: center; justify-content: space-between; background: var(--card); padding: 12px 24px; border-top: 1px solid var(--border); flex-shrink: 0; }
+    .nav-btn { display: flex; align-items: center; gap: 8px; background: var(--navy); color: #fff; border: none; border-radius: 8px; padding: 9px 20px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; }
+    .nav-btn:hover { background: var(--navy-light); }
+    .nav-btn:disabled { opacity: .35; cursor: not-allowed; }
+    .nav-btn.primary { background: var(--accent); }
+    .nav-btn.primary:hover { background: #2563eb; }
+    #slide-counter { font-size: 12px; color: var(--muted); }
+
+    /* ══════════════════════════════════════════
+       FLOWCHART SLIDE
+    ══════════════════════════════════════════ */
+    .slide-flowchart { justify-content: flex-start; gap: 0; padding-top: 28px; overflow-y: auto; }
+    .slide.slide-flowchart.active { justify-content: flex-start; }
+
+    .flowchart-header { text-align: center; margin-bottom: 8px; flex-shrink: 0; }
+    .flowchart-header .fc-module-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); margin-bottom: 4px; }
+    .flowchart-header h2 { font-size: 20px; font-weight: 800; }
+    .flowchart-header p { font-size: 13px; color: var(--muted); margin-top: 4px; max-width: 660px; margin-left: auto; margin-right: auto; }
+
+    /* Phase sub-label strip */
+    .fc-phase-strip {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      margin-bottom: 8px; flex-shrink: 0;
+    }
+    .fc-phase-badge {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+      padding: 3px 12px; border-radius: 20px; border: 1px solid;
+    }
+    .fc-phase-badge.recitation { color: var(--accent); border-color: var(--accent); background: rgba(59,130,246,.1); }
+    .fc-phase-badge.actout     { color: var(--amber);  border-color: var(--amber);  background: rgba(245,158,11,.1); }
+
+    .flowchart-progress {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 8px 24px rgba(0,0,0,.22);
+    }
+    .fc-prog-label { font-size: 11px; color: var(--muted); }
+    .fc-prog-bar { width: 120px; height: 5px; background: var(--border); border-radius: 10px; overflow: hidden; }
+    .fc-prog-fill { height: 100%; border-radius: 10px; transition: width .4s; }
+    .fc-prog-count { font-size: 11px; font-weight: 700; }
+
+    .flowchart-canvas {
+      position: relative;
+      width: 100%;
+      max-width: 980px;
+      margin: 12px auto 0;
+      padding: 76px 0 36px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 72px;
+    }
+    .fc-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+    /* Root node — card style matching fc-node */
+    .fc-root { position: relative; width: 210px; background: var(--card); border: 2px solid var(--border); border-radius: 14px; padding: 14px 12px 12px; text-align: center; z-index: 2; cursor: pointer; transition: all .2s; user-select: none; }
+    .fc-root:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+    .fc-root.intro-watched .fc-watched-badge { opacity: 1; transform: scale(1); }
+    .fc-root[data-variant="intro-blue"]  { border-color: #1d3e6e; }
+    .fc-root[data-variant="intro-blue"]:hover  { border-color: var(--accent); }
+    .fc-root[data-variant="intro-blue"]  .fc-node-type { color: var(--accent); }
+    .fc-root[data-variant="intro-amber"] { border-color: #4a3008; }
+    .fc-root[data-variant="intro-amber"]:hover { border-color: var(--amber); }
+    .fc-root[data-variant="intro-amber"] .fc-node-type { color: var(--amber); }
+    .fc-root[data-variant="intro-green"] { border-color: #14532d; }
+    .fc-root[data-variant="intro-green"]:hover { border-color: var(--green); }
+    .fc-root[data-variant="intro-green"] .fc-node-type { color: var(--green); }
+    .fc-root[data-variant="intro-purple"] { border-color: #3b1a6e; }
+    .fc-root[data-variant="intro-purple"]:hover { border-color: var(--purple); }
+    .fc-root[data-variant="intro-purple"] .fc-node-type { color: var(--purple); }
+
+    /* ── NAO LINEAR FLOW ── */
+    .nao-scroll-inner { flex: 1; min-height: 0; overflow-y: auto; width: 100%; display: flex; flex-direction: column; align-items: center; padding: 0 0 24px; }
+    .nao-flow { display: flex; flex-direction: column; align-items: center; width: 100%; padding-top: 14px; }
+    .nao-intro-block { width: 320px; background: #000; border: 2px solid var(--purple); border-radius: 12px; overflow: hidden; flex-shrink: 0; }
+    .nao-intro-top { padding: 8px 12px 0; }
+    .nao-intro-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--purple); margin-bottom: 2px; }
+    .nao-intro-block .iframe-wrap { width: 100%; }
+    .nao-intro-block .iframe-wrap iframe { width: 100%; height: 155px; display: block; border: none; }
+    .nao-age-note { font-size: 11px; color: var(--amber); background: rgba(245,158,11,.1); border-top: 1px solid rgba(245,158,11,.2); padding: 6px 12px; text-align: center; }
+    .nao-connector { display: flex; flex-direction: column; align-items: center; margin: 4px 0; }
+    .nao-connector-line { width: 2px; height: 22px; background: linear-gradient(to bottom, rgba(168,85,247,.5), rgba(168,85,247,.2)); }
+    .nao-connector-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid rgba(168,85,247,.4); }
+    .nao-question-block { width: 100%; max-width: 700px; margin-bottom: 0; }
+    .nao-question-label { text-align: center; font-size: 12px; font-weight: 700; color: var(--purple); background: rgba(168,85,247,.1); border: 1px solid rgba(168,85,247,.25); border-radius: 8px; padding: 7px 16px; margin-bottom: 10px; }
+    .nao-response-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .nao-response-grid .fc-node { width: auto; }
+
+    /* Video root node */
+
+    /* Node layout */
+    .fc-nodes {
+      position: relative;
+      z-index: 2;
+      width: min(100%, 960px);
+      display: flex;
+      flex-wrap: nowrap;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 24px;
+      padding: 0 12px;
+    }
+
+    /* Node card */
+    .fc-node { width: 210px; background: var(--card); border: 2px solid var(--border); border-radius: 14px; padding: 14px 12px 12px; cursor: pointer; transition: all .2s; position: relative; text-align: center; user-select: none; }
+    .fc-node:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+
+    /* Variant border colors */
+    .fc-node[data-variant="lesson"]     { border-color: #3730a3; }
+    .fc-node[data-variant="lesson"]:hover { border-color: var(--purple); }
+    .fc-node[data-variant="correct"]    { border-color: #14532d; }
+    .fc-node[data-variant="correct"]:hover { border-color: var(--green); }
+    .fc-node[data-variant="partial"]    { border-color: #78350f; }
+    .fc-node[data-variant="partial"]:hover { border-color: var(--amber); }
+    .fc-node[data-variant="incorrect"]  { border-color: #7f1d1d; }
+    .fc-node[data-variant="incorrect"]:hover { border-color: var(--red); }
+
+    /* Type label */
+    .fc-node-type { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 7px; }
+    .fc-node[data-variant="lesson"]    .fc-node-type { color: var(--purple); }
+    .fc-node[data-variant="correct"]   .fc-node-type { color: #4ade80; }
+    .fc-node[data-variant="partial"]   .fc-node-type { color: var(--amber); }
+    .fc-node[data-variant="incorrect"] .fc-node-type { color: #f87171; }
+
+    .fc-node-icon { font-size: 28px; margin-bottom: 7px; line-height: 1; }
+    .fc-node-title { font-size: 12.5px; font-weight: 700; line-height: 1.35; margin-bottom: 5px; }
+    .fc-node-desc { font-size: 11px; color: var(--muted); line-height: 1.45; }
+
+    .fc-play-btn { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 10px; background: rgba(255,255,255,.07); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; font-size: 11.5px; font-weight: 600; color: var(--text); transition: all .15s; }
+    .fc-node:hover .fc-play-btn { background: rgba(255,255,255,.13); }
+
+    /* ── ACTIVE CARD GLOW ── */
+    .fc-node, .fc-root { transition: transform .4s, box-shadow .4s, border-color .4s; }
+    [data-variant="correct"].card-active    { border-color: var(--green)  !important; box-shadow: 0 0 0 3px rgba(34,197,94,.45),  0 0 22px rgba(34,197,94,.25); }
+    [data-variant="incorrect"].card-active  { border-color: var(--red)    !important; box-shadow: 0 0 0 3px rgba(239,68,68,.45),  0 0 22px rgba(239,68,68,.25); }
+    [data-variant="partial"].card-active    { border-color: var(--amber)  !important; box-shadow: 0 0 0 3px rgba(245,158,11,.45), 0 0 22px rgba(245,158,11,.25); }
+    [data-variant="intro-blue"].card-active   { border-color: var(--accent) !important; box-shadow: 0 0 0 3px rgba(59,130,246,.45),  0 0 22px rgba(59,130,246,.25); }
+    [data-variant="intro-amber"].card-active  { border-color: var(--amber)  !important; box-shadow: 0 0 0 3px rgba(245,158,11,.45), 0 0 22px rgba(245,158,11,.25); }
+    [data-variant="intro-green"].card-active  { border-color: var(--green)  !important; box-shadow: 0 0 0 3px rgba(34,197,94,.45),  0 0 22px rgba(34,197,94,.25); }
+    [data-variant="intro-purple"].card-active { border-color: var(--purple) !important; box-shadow: 0 0 0 3px rgba(168,85,247,.45), 0 0 22px rgba(168,85,247,.25); }
+    @keyframes cardHopFlash {
+      0%   { filter: brightness(1); }
+      35%  { filter: brightness(2.2); }
+      100% { filter: brightness(1); }
+    }
+    .card-hopping { animation: cardHopFlash .76s cubic-bezier(.34, 1.4, .64, 1); }
+
+    .fc-watched-badge { position: absolute; top: -10px; right: -10px; background: var(--green); color: #fff; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.4); opacity: 0; transform: scale(0); transition: all .5s cubic-bezier(.34,1.56,.64,1); }
+    .fc-node.watched .fc-watched-badge { opacity: 1; transform: scale(1); }
+
+    .all-watched-banner { display: none; text-align: center; background: linear-gradient(135deg, #14532d, #166534); border: 1px solid #22c55e; border-radius: 10px; padding: 10px 20px; margin-top: 10px; flex-shrink: 0; }
+    .all-watched-banner.visible { display: block; animation: fadeIn .4s ease; }
+    .all-watched-banner p { font-size: 13px; font-weight: 600; color: #bbf7d0; }
+
+    /* ══════════════════════════════════════════
+       VIDEO MODAL
+    ══════════════════════════════════════════ */
+    #video-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0); z-index: 1000; flex-direction: column; align-items: center; justify-content: center; padding: 24px; transition: background .5s ease; }
+    #video-modal.open { display: flex; }
+    #video-modal.open.modal-bg-ready { background: rgba(0,0,0,.87); }
+    .modal-inner { background: var(--card); border: 1px solid var(--border); border-radius: 16px; width: 100%; max-width: 920px; display: flex; flex-direction: column; overflow: hidden; max-height: 90vh; }
+    @keyframes modalExpand {
+      from { transform: translate(var(--mo-x), var(--mo-y)) scale(var(--mo-scale)); opacity: 0; }
+      to   { transform: translate(0,0) scale(1); opacity: 1; }
+    }
+    @keyframes modalCollapse {
+      from { transform: translate(0,0) scale(1); opacity: 1; }
+      to   { transform: translate(var(--mo-x), var(--mo-y)) scale(var(--mo-scale)); opacity: 0; }
+    }
+    .modal-inner.is-opening { animation: modalExpand .64s cubic-bezier(0.34, 1.3, 0.64, 1) forwards; }
+    .modal-inner.is-closing { animation: modalCollapse .44s cubic-bezier(0.4, 0, 1, 1) forwards; }
+    .modal-topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .modal-topbar-left { display: flex; flex-direction: column; gap: 2px; }
+    .modal-type-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+    .modal-type-tag.lesson    { color: var(--purple); }
+    .modal-type-tag.correct   { color: #4ade80; }
+    .modal-type-tag.partial   { color: var(--amber); }
+    .modal-type-tag.incorrect { color: #f87171; }
+    .modal-title { font-size: 15px; font-weight: 800; }
+    .modal-close { background: rgba(255,255,255,.08); border: 1px solid var(--border); color: var(--text); border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; transition: all .15s; flex-shrink: 0; }
+    .modal-close:hover { background: rgba(255,255,255,.15); }
+    .modal-video-area { flex: 1; min-height: 0; background: #000; display: flex; align-items: center; justify-content: center; position: relative; }
+    #modal-iframe { width: 100%; height: 62vh; border: none; display: block; }
+
+    /* ── IFRAME LOADING / ERROR OVERLAYS ── */
+    .iframe-wrap { position: relative; }
+    .iframe-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: #0f172a; color: var(--muted); font-size: 12px; z-index: 2; transition: opacity .25s; pointer-events: none; }
+    .iframe-overlay.hidden { opacity: 0; pointer-events: none; }
+    .iframe-overlay .spinner { width: 26px; height: 26px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .75s linear infinite; flex-shrink: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .iframe-overlay.error-state { pointer-events: all; cursor: default; gap: 6px; }
+    .iframe-overlay .err-icon { font-size: 28px; opacity: .5; }
+    .iframe-overlay .err-title { font-size: 13px; font-weight: 700; color: var(--text); }
+    .iframe-overlay .err-detail { font-size: 11px; color: var(--muted); max-width: 260px; text-align: center; line-height: 1.5; }
+    /* Inline (non-modal) help toggle */
+    .iframe-help { font-size: 10px; color: var(--muted); padding: 4px 10px 6px; background: rgba(255,255,255,.03); border-top: 1px solid var(--border); }
+    .iframe-help summary { cursor: pointer; color: var(--accent); list-style: none; display: flex; align-items: center; gap: 4px; }
+    .iframe-help summary::before { content: '?'; display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; border-radius: 50%; border: 1px solid var(--accent); font-size: 9px; flex-shrink: 0; }
+    .iframe-help ul { margin: 5px 0 0 14px; line-height: 1.7; color: var(--muted); }
+    .iframe-help li b { color: var(--text); }
+    /* Modal help row */
+    .modal-video-help { font-size: 11px; padding: 5px 20px 8px; border-top: 1px solid var(--border); }
+    .modal-video-help summary { cursor: pointer; color: var(--accent); list-style: none; display: flex; align-items: center; gap: 5px; }
+    .modal-video-help summary::before { content: '?'; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--accent); font-size: 9px; flex-shrink: 0; }
+    .modal-video-help ul { margin: 5px 0 0 16px; line-height: 1.8; color: var(--muted); }
+    .modal-video-help li b { color: var(--text); }
+    .modal-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-top: 1px solid var(--border); flex-shrink: 0; gap: 16px; }
+    .modal-desc { font-size: 13px; color: var(--muted); line-height: 1.4; flex: 1; }
+    .modal-done-btn { background: var(--green); color: #fff; border: none; border-radius: 8px; padding: 9px 22px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all .15s; white-space: nowrap; }
+    .modal-done-btn:hover { background: #16a34a; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div>
+      <div id="topbar-title">Protocol #8042 — Firearm Safety Education in Youth (Branching)</div>
+      <div id="topbar-subtitle">PI: Payton Przyuski &nbsp;|&nbsp; Faculty Sponsor: Dr. Tariq Iqbal</div>
+    </div>
+    <div id="step-indicator">Step <span id="current-step-num">1</span> of <span id="total-steps">—</span></div>
+  </div>
+
+  <!-- STEP PROGRESS -->
+  <div id="step-progress"></div>
+
+  <!-- SLIDES -->
+  <div id="slide-area">
+
+    <!-- 0: Cover -->
+    <div class="slide slide-cover" data-label="Welcome">
+      <div class="cover-badge">Research Study</div>
+      <h1>Firearm Safety<br><span>Education in Youth</span></h1>
+      <p class="sub">Expert evaluation session for an interactive AI system designed to teach firearm safety to children ages 4–7.</p>
+      <p class="meta">Protocol #8042 &nbsp;·&nbsp; ~60 minutes &nbsp;·&nbsp; Remote Session via Zoom</p>
+    </div>
+
+    <!-- 1: Overview -->
+    <div class="slide" data-label="Overview">
+      <div class="slide-section-h">What You'll Be Evaluating</div>
+      <div class="slide-section-sub">Today's session has three modules, evaluated in order. After each, you'll complete a short Qualtrics survey.</div>
+      <div class="overview-grid">
+        <div class="overview-card">
+          <div class="num">01</div>
+          <h3>NAO Robot Module</h3>
+          <p>A social robot delivers a firearm-safety lesson teaching four key steps: Stop, Don't Touch, Run Away, Tell an Adult.</p>
+        </div>
+        <div class="overview-card">
+          <div class="num">02</div>
+          <h3>AR Training Module</h3>
+          <p>Two phases: first the child verbally recites the safety rules, then physically acts them out in AR with an AI voice coach.</p>
+        </div>
+        <div class="overview-card">
+          <div class="num">03</div>
+          <h3>AR Simulation</h3>
+          <p>Three staged AR testing scenarios in the kitchen, garage, and bedroom where the child must apply the safety steps independently.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2: Survey 1 -->
+    <div class="slide slide-wait" data-label="Survey #1">
+      <h2>Pre-Task Demographics Survey</h2>
+      <p>Please complete the brief background survey sent to you in the Zoom chat.</p>
+      <div class="survey-link-box">
+        <span class="survey-link-url" id="survey-url-1">https://virginia.az1.qualtrics.com/jfe/form/SV_b1nmZX3L8lqSlD0</span>
+        <button class="survey-copy-btn" onclick="copySurvey('survey-url-1', this)">Copy Link</button>
+      </div>
+      <div class="survey-note">Let the facilitator know when you're done.</div>
+    </div>
+
+    <!-- 3: Phase 1 intro -->
+    <div class="slide phase-intro" data-label="Phase 1">
+      <div class="phase-tag">Phase 1</div>
+      <h2>Training Phase Evaluation</h2>
+      <p>You'll explore the NAO robot module and both phases of the AR training module, then complete a short survey after each.</p>
+    </div>
+
+    <!-- 4: NAO Robot FLOWCHART -->
+    <div class="slide slide-flowchart" data-label="NAO Robot" data-fc="nao">
+      <div class="flowchart-header">
+        <div class="fc-module-tag">Module 1 of 3</div>
+        <h2>NAO Robot Instruction Module</h2>
+        <p>Watch the intro, then explore each question the robot asks. For each, see how it responds to a good, bad, and ambiguous child answer.</p>
+      </div>
+      <div class="flowchart-progress">
+        <span class="fc-prog-label">Watched</span>
+        <div class="fc-prog-bar"><div class="fc-prog-fill" id="fc-prog-nao" style="width:0%; background: var(--purple);"></div></div>
+        <span class="fc-prog-count" id="fc-count-nao" style="color: var(--purple);">0 / 10</span>
+      </div>
+
+      <div class="nao-scroll-inner">
+      <div class="nao-flow">
+
+        <!-- Intro card -->
+        <div class="fc-node nao-intro-card" data-variant="intro-purple" id="fc-root-nao" onclick="openIntro('nao', this)">
+          <div class="fc-watched-badge">✓</div>
+          <div class="fc-node-type">Intro Video</div>
+          <div class="fc-node-title">Robot Intro Speech</div>
+          <div class="fc-node-desc">NAO robot introduces the firearm safety lesson. Three age-specific versions available.</div>
+          <div class="fc-play-btn">▶ Watch</div>
+        </div>
+
+        <div class="nao-connector"><div class="nao-connector-line"></div><div class="nao-connector-arrow"></div></div>
+
+        <!-- Question 1 -->
+        <div class="nao-question-block">
+          <div class="nao-question-label">Question 1 — [placeholder]</div>
+          <div class="nao-response-grid">
+            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="0" onclick="openModal('nao',0,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Good Response</div>
+              <div class="fc-node-title">Child Answers Correctly</div>
+              <div class="fc-node-desc">Child gives the right answer. Robot praises and reinforces.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="1" onclick="openModal('nao',1,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Bad Response</div>
+              <div class="fc-node-title">Child Answers Incorrectly</div>
+              <div class="fc-node-desc">Child gives the wrong answer. Robot gently corrects and re-teaches.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="2" onclick="openModal('nao',2,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Ambiguous Response</div>
+              <div class="fc-node-title">Child Answers Unclearly</div>
+              <div class="fc-node-desc">Child's answer is unclear or partial. Robot prompts for clarification.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nao-connector"><div class="nao-connector-line"></div><div class="nao-connector-arrow"></div></div>
+
+        <!-- Question 2 -->
+        <div class="nao-question-block">
+          <div class="nao-question-label">Question 2 — [placeholder]</div>
+          <div class="nao-response-grid">
+            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="3" onclick="openModal('nao',3,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Good Response</div>
+              <div class="fc-node-title">Child Answers Correctly</div>
+              <div class="fc-node-desc">Child gives the right answer. Robot praises and reinforces.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="4" onclick="openModal('nao',4,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Bad Response</div>
+              <div class="fc-node-title">Child Answers Incorrectly</div>
+              <div class="fc-node-desc">Child gives the wrong answer. Robot gently corrects and re-teaches.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="5" onclick="openModal('nao',5,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Ambiguous Response</div>
+              <div class="fc-node-title">Child Answers Unclearly</div>
+              <div class="fc-node-desc">Child's answer is unclear or partial. Robot prompts for clarification.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nao-connector"><div class="nao-connector-line"></div><div class="nao-connector-arrow"></div></div>
+
+        <!-- Question 3 -->
+        <div class="nao-question-block">
+          <div class="nao-question-label">Question 3 — [placeholder]</div>
+          <div class="nao-response-grid">
+            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="6" onclick="openModal('nao',6,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Good Response</div>
+              <div class="fc-node-title">Child Answers Correctly</div>
+              <div class="fc-node-desc">Child gives the right answer. Robot praises and reinforces.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="7" onclick="openModal('nao',7,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Bad Response</div>
+              <div class="fc-node-title">Child Answers Incorrectly</div>
+              <div class="fc-node-desc">Child gives the wrong answer. Robot gently corrects and re-teaches.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="8" onclick="openModal('nao',8,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Ambiguous Response</div>
+              <div class="fc-node-title">Child Answers Unclearly</div>
+              <div class="fc-node-desc">Child's answer is unclear or partial. Robot prompts for clarification.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /nao-flow -->
+
+      <div class="all-watched-banner" id="banner-nao">
+        <p>All clips watched — you can now move on to the survey.</p>
+      </div>
+      </div><!-- /nao-scroll-inner -->
+    </div>
+
+    <!-- 5: Survey 2 -->
+    <div class="slide slide-survey" data-label="Survey #2">
+      <h2>Post-NAO Robot Survey</h2>
+      <p>Please complete the survey about the NAO robot module. It covers instructional clarity, tone, pacing, and age-appropriateness.</p>
+      <div class="survey-link-box">
+        <span class="survey-link-url" id="survey-url-2">https://virginia.az1.qualtrics.com/jfe/form/SV_8w9aFAcCdrpkKJE</span>
+        <button class="survey-copy-btn" onclick="copySurvey('survey-url-2', this)">Copy Link</button>
+      </div>
+      <div class="survey-note">Let the facilitator know when you're done. (~3 min)</div>
+    </div>
+
+    <!-- 6: AR Training — Phase 1: Verbal Recitation FLOWCHART -->
+    <div class="slide slide-flowchart" data-label="AR: Recitation" data-fc="ar1">
+      <div class="flowchart-header">
+        <div class="fc-module-tag">Module 2 of 3 &nbsp;·&nbsp; Part 1 of 2</div>
+        <h2>AR Training — Verbal Recitation Phase</h2>
+        <p>Before the AR scenario begins, the AI voice coach asks the child to recall the four safety rules. These clips show three different child response scenarios.</p>
+      </div>
+      <div class="fc-phase-strip">
+        <span class="fc-phase-badge recitation">Phase 1 of 2: Verbal Recitation</span>
+      </div>
+      <div class="flowchart-canvas" id="fc-canvas-ar1">
+        <div class="flowchart-progress">
+          <span class="fc-prog-label">Watched</span>
+          <div class="fc-prog-bar"><div class="fc-prog-fill" id="fc-prog-ar1" style="width:0%; background: var(--accent);"></div></div>
+          <span class="fc-prog-count" id="fc-count-ar1" style="color: var(--accent);">0 / 5</span>
+        </div>
+        <svg class="fc-svg" id="fc-svg-ar1" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="fc-root" data-variant="intro-blue" id="fc-root-ar1" onclick="openIntro('ar1', this)">
+          <div class="fc-watched-badge">✓</div>
+          <div class="fc-node-type">Intro Video</div>
+          <div class="fc-node-title">AI Coach — Intro</div>
+          <div class="fc-node-desc">Watch the AI coach introduce the verbal recitation phase before viewing response clips.</div>
+          <div class="fc-play-btn">▶ Watch</div>
+        </div>
+        <div class="fc-nodes" id="fc-nodes-ar1">
+
+          <div class="fc-node" data-variant="correct" data-fc="ar1" data-idx="0" onclick="openModal('ar1',0,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Correct Response</div>
+            <div class="fc-node-title">Knows All Four Rules</div>
+            <div class="fc-node-desc">Child correctly recites all four steps and the tell-adult phrase. AI praises and advances to Act Out phase.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+          <div class="fc-node" data-variant="partial" data-fc="ar1" data-idx="1" onclick="openModal('ar1',1,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Doesn't Know</div>
+            <div class="fc-node-title">Doesn't Know the Rules</div>
+            <div class="fc-node-desc">Child says they don't know. AI walks through each of the four rules one at a time, asking the child to repeat each one.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+          <div class="fc-node" data-variant="incorrect" data-fc="ar1" data-idx="2" onclick="openModal('ar1',2,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Incorrect Response</div>
+            <div class="fc-node-title">Says Wrong Rules</div>
+            <div class="fc-node-desc">Child attempts to recite but states incorrect steps. AI corrects each mistake and re-prompts until all four rules are said correctly.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+          <div class="fc-node" data-variant="incorrect" data-fc="ar1" data-idx="3" onclick="openModal('ar1',3,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Incorrect Response</div>
+            <div class="fc-node-title">Reaches for the Gun</div>
+            <div class="fc-node-desc">Child reaches toward the gun during the recitation phase. AR hides it immediately. AI corrects the behavior and resets the scene.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+        </div>
+      </div>
+      <div class="all-watched-banner" id="banner-ar1">
+        <p>All clips watched — continue to the Act Out phase.</p>
+      </div>
+    </div>
+
+    <!-- 7: AR Training — Phase 2: Act Out FLOWCHART -->
+    <div class="slide slide-flowchart" data-label="AR: Act Out" data-fc="ar2">
+      <div class="flowchart-header">
+        <div class="fc-module-tag">Module 2 of 3 &nbsp;·&nbsp; Part 2 of 2</div>
+        <h2>AR Training — Act Out Phase</h2>
+        <p>The child physically encounters the gun in AR. The AI coach observes silently and responds based on what the child does. These clips show the three possible outcomes.</p>
+      </div>
+      <div class="fc-phase-strip">
+        <span class="fc-phase-badge actout">Phase 2 of 2: Physical Act Out</span>
+      </div>
+      <div class="flowchart-canvas" id="fc-canvas-ar2">
+        <div class="flowchart-progress">
+          <span class="fc-prog-label">Watched</span>
+          <div class="fc-prog-bar"><div class="fc-prog-fill" id="fc-prog-ar2" style="width:0%; background: var(--amber);"></div></div>
+          <span class="fc-prog-count" id="fc-count-ar2" style="color: var(--amber);">0 / 4</span>
+        </div>
+        <svg class="fc-svg" id="fc-svg-ar2" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="fc-root" data-variant="intro-amber" id="fc-root-ar2" onclick="openIntro('ar2', this)">
+          <div class="fc-watched-badge">✓</div>
+          <div class="fc-node-type">Intro Video</div>
+          <div class="fc-node-title">AI Coach — Intro</div>
+          <div class="fc-node-desc">Watch the AI coach introduce the act-out phase before viewing response clips.</div>
+          <div class="fc-play-btn">▶ Watch</div>
+        </div>
+        <div class="fc-nodes" id="fc-nodes-ar2">
+
+          <div class="fc-node" data-variant="correct" data-fc="ar2" data-idx="0" onclick="openModal('ar2',0,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Correct Response</div>
+            <div class="fc-node-title">Runs Away &amp; Tells Adult</div>
+            <div class="fc-node-desc">Child retreats ≥1.5m from the gun and spontaneously calls out to a trusted adult within 3 seconds. Full success — AI praises and completes the session.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+          <div class="fc-node" data-variant="partial" data-fc="ar2" data-idx="1" onclick="openModal('ar2',1,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Partial — Prompted</div>
+            <div class="fc-node-title">Runs Away, Forgets to Tell</div>
+            <div class="fc-node-desc">Child runs away correctly but stays silent. After a 3-second window, the AI prompts: "If you found a gun, what would you say to a trusted adult?"</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+          <div class="fc-node" data-variant="incorrect" data-fc="ar2" data-idx="2" onclick="openModal('ar2',2,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Incorrect Response</div>
+            <div class="fc-node-title">Reaches for the Gun</div>
+            <div class="fc-node-desc">Child reaches toward the gun. AR hides it immediately. AI corrects the behavior and instructs the child to return to the start marker and tap to reset.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+        </div>
+      </div>
+      <div class="all-watched-banner" id="banner-ar2">
+        <p>All clips watched — you can now move on to the survey.</p>
+      </div>
+    </div>
+
+    <!-- 8: Survey 3 -->
+    <div class="slide slide-survey" data-label="Survey #3">
+      <h2>Post-AR Training Survey</h2>
+      <p>Please complete the survey about the AR training module, covering both the recitation and act-out phases.</p>
+      <div class="survey-link-box">
+        <span class="survey-link-url" id="survey-url-3">https://virginia.az1.qualtrics.com/jfe/form/SV_2tzD2CsJW1R97zo</span>
+        <button class="survey-copy-btn" onclick="copySurvey('survey-url-3', this)">Copy Link</button>
+      </div>
+      <div class="survey-note">Let the facilitator know when you're done. (~2 min)</div>
+    </div>
+
+    <!-- 9: Break -->
+    <div class="slide phase-intro" data-label="Break">
+      <div class="phase-tag">Halfway Point</div>
+      <h2>Short Break</h2>
+      <p>Great work — that wraps up the training phase. Feel free to take a moment before we continue to the testing phase.</p>
+    </div>
+
+    <!-- 10: Phase 2 intro -->
+    <div class="slide phase-intro" data-label="Phase 2">
+      <div class="phase-tag">Phase 2</div>
+      <h2>Testing Phase Evaluation</h2>
+      <p>You'll explore branching simulation clips based on the app's staged room prompts: finding cookies in the kitchen, finding a toy in the garage, and hiding in the bedroom.</p>
+    </div>
+
+    <!-- 11: Simulation FLOWCHART -->
+    <div class="slide slide-flowchart" data-label="Simulation" data-fc="sim">
+      <div class="flowchart-header">
+        <div class="fc-module-tag">Module 3 of 3</div>
+        <h2>AR In-Situ Simulation — Child Response Scenarios</h2>
+        <p>Click each node to watch the clip. Pay attention to realism, the system's feedback strategy, tone escalation, and potential for emotional distress.</p>
+      </div>
+      <div class="flowchart-canvas" id="fc-canvas-sim">
+        <div class="flowchart-progress">
+          <span class="fc-prog-label">Watched</span>
+          <div class="fc-prog-bar"><div class="fc-prog-fill" id="fc-prog-sim" style="width:0%; background: var(--green);"></div></div>
+          <span class="fc-prog-count" id="fc-count-sim" style="color: var(--green);">0 / 4</span>
+        </div>
+        <svg class="fc-svg" id="fc-svg-sim" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="fc-root" data-variant="intro-green" id="fc-root-sim" onclick="openIntro('sim', this)">
+          <div class="fc-watched-badge">✓</div>
+          <div class="fc-node-type">Intro Video</div>
+          <div class="fc-node-title">AI Coach — Intro</div>
+          <div class="fc-node-desc">Watch the AI coach introduce the staged kitchen, garage, and bedroom testing scenarios before viewing response clips.</div>
+          <div class="fc-play-btn">▶ Watch</div>
+        </div>
+        <div class="fc-nodes" id="fc-nodes-sim">
+
+          <div class="fc-node" data-variant="correct" data-fc="sim" data-idx="0" onclick="openModal('sim',0,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Correct Response</div>
+            <div class="fc-node-title">Does &amp; Says Right Steps</div>
+            <div class="fc-node-desc">Child correctly performs and verbalizes all four safety steps. Observe the positive reinforcement.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+          <div class="fc-node" data-variant="partial" data-fc="sim" data-idx="1" onclick="openModal('sim',1,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Partial — Prompted</div>
+            <div class="fc-node-title">Runs Away, Forgets to Tell</div>
+            <div class="fc-node-desc">Child runs away from the gun but stays silent. After a short pause, the AI prompts the child to tell a trusted adult what happened.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+          <div class="fc-node" data-variant="incorrect" data-fc="sim" data-idx="2" onclick="openModal('sim',2,this)">
+            <div class="fc-watched-badge">✓</div>
+            <div class="fc-node-type">Incorrect Response</div>
+            <div class="fc-node-title">Reaches for the Gun</div>
+            <div class="fc-node-desc">Child physically reaches toward or touches the firearm. Observe how the AI system detects and responds.</div>
+            <div class="fc-play-btn">▶ Watch</div>
+          </div>
+
+        </div>
+      </div>
+      <div class="all-watched-banner" id="banner-sim">
+        <p>All clips watched — you can now move on to the final survey.</p>
+      </div>
+    </div>
+
+    <!-- 12: Survey 4 -->
+    <div class="slide slide-survey" data-label="Survey #4">
+      <h2>Post-AR Simulation Survey</h2>
+      <p>This is the most detailed survey. It covers scenario realism, age-appropriateness, corrective feedback strategy, potential for emotional distress, and implementation feasibility. Take your time.</p>
+      <div class="survey-link-box">
+        <span class="survey-link-url" id="survey-url-4">https://virginia.az1.qualtrics.com/jfe/form/SV_8d22wlRFHWH4LCm</span>
+        <button class="survey-copy-btn" onclick="copySurvey('survey-url-4', this)">Copy Link</button>
+      </div>
+      <div class="survey-note">Let the facilitator know when you're done. (~10 min)</div>
+    </div>
+
+    <!-- 13: Closing -->
+    <div class="slide slide-closing" data-label="Closing">
+      <h2>That's Everything — Thank You!</h2>
+      <p>Your feedback is incredibly valuable and will directly help us refine the system before any testing with children. All responses are de-identified and linked only by your study ID number.</p>
+      <div class="contact-block">
+        <div>Have questions later? Reach out:</div>
+        <div><strong>Payton Przyuski</strong> — <a href="mailto:hzy8kg@virginia.edu">hzy8kg@virginia.edu</a></div>
+        <div><strong>Dr. Tariq Iqbal</strong> — <a href="mailto:ti3fe@virginia.edu">ti3fe@virginia.edu</a></div>
+      </div>
+    </div>
+
+  </div><!-- /slide-area -->
+
+  <!-- BOTTOM NAV -->
+  <div id="bottom-nav">
+    <button class="nav-btn" id="btn-prev" onclick="prevSlide()">← Back</button>
+    <span id="slide-counter"></span>
+    <button class="nav-btn primary" id="btn-next" onclick="nextSlide()">Next →</button>
+  </div>
+
+</div><!-- /app -->
+
+<!-- VIDEO MODAL -->
+<div id="video-modal">
+  <div class="modal-inner" id="modal-inner">
+    <div class="modal-topbar">
+      <div class="modal-topbar-left">
+        <div class="modal-type-tag" id="modal-type-tag"></div>
+        <div class="modal-title" id="modal-title"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-video-area">
+      <iframe id="modal-iframe" allowfullscreen allow="autoplay"></iframe>
+      <div class="iframe-overlay" id="modal-loading">
+        <div class="spinner"></div>
+        <span>Loading video…</span>
+      </div>
+    </div>
+    <details class="modal-video-help" id="modal-video-help">
+      <summary>Having trouble with the video?</summary>
+      <ul>
+        <li><b>Blank / spinning forever</b> — the Drive ID in the HTML may be wrong; double-check the link.</li>
+        <li><b>"File not found"</b> — the file was deleted or the ID is incorrect; update it in the HTML.</li>
+        <li><b>"You need permission"</b> — open the file in Drive → Share → change to <em>Anyone with the link</em>.</li>
+      </ul>
+    </details>
+    <div class="modal-footer">
+      <div class="modal-desc" id="modal-desc"></div>
+      <button class="modal-done-btn" id="modal-action-btn" onclick="markWatchedAndClose()">✓ Mark as Watched &amp; Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── VIDEO DATA ──
+  const fcData = {
+    nao: {
+      progressBar: 'fc-prog-nao', countEl: 'fc-count-nao', banner: 'banner-nao',
+      svgId: null, // linear layout — no SVG connectors
+      lineColor: '#a855f7', watched: new Set(),
+      intro: { title: 'Robot Intro Speech', desc: 'NAO robot introduces the firearm safety lesson. Three age-specific versions are available based on the child\'s age group.', file: 'https://drive.google.com/file/d/PASTE_NAO_INTRO_DRIVE_ID/preview' },
+      nodes: [
+        // Question 1
+        { variant: 'correct',   typeLabel: 'Good Response',      title: 'Q1 — Child Answers Correctly',  desc: 'Child gives the right answer. Robot praises and reinforces.',              file: 'https://drive.google.com/file/d/PASTE_NAO_Q1_GOOD_DRIVE_ID/preview' },
+        { variant: 'incorrect', typeLabel: 'Bad Response',       title: 'Q1 — Child Answers Incorrectly',desc: 'Child gives the wrong answer. Robot gently corrects and re-teaches.',      file: 'https://drive.google.com/file/d/PASTE_NAO_Q1_BAD_DRIVE_ID/preview' },
+        { variant: 'partial',   typeLabel: 'Ambiguous Response', title: 'Q1 — Child Answers Unclearly',  desc: 'Child\'s answer is unclear or partial. Robot prompts for clarification.', file: 'https://drive.google.com/file/d/PASTE_NAO_Q1_AMB_DRIVE_ID/preview' },
+        // Question 2
+        { variant: 'correct',   typeLabel: 'Good Response',      title: 'Q2 — Child Answers Correctly',  desc: 'Child gives the right answer. Robot praises and reinforces.',              file: 'https://drive.google.com/file/d/PASTE_NAO_Q2_GOOD_DRIVE_ID/preview' },
+        { variant: 'incorrect', typeLabel: 'Bad Response',       title: 'Q2 — Child Answers Incorrectly',desc: 'Child gives the wrong answer. Robot gently corrects and re-teaches.',      file: 'https://drive.google.com/file/d/PASTE_NAO_Q2_BAD_DRIVE_ID/preview' },
+        { variant: 'partial',   typeLabel: 'Ambiguous Response', title: 'Q2 — Child Answers Unclearly',  desc: 'Child\'s answer is unclear or partial. Robot prompts for clarification.', file: 'https://drive.google.com/file/d/PASTE_NAO_Q2_AMB_DRIVE_ID/preview' },
+        // Question 3
+        { variant: 'correct',   typeLabel: 'Good Response',      title: 'Q3 — Child Answers Correctly',  desc: 'Child gives the right answer. Robot praises and reinforces.',              file: 'https://drive.google.com/file/d/PASTE_NAO_Q3_GOOD_DRIVE_ID/preview' },
+        { variant: 'incorrect', typeLabel: 'Bad Response',       title: 'Q3 — Child Answers Incorrectly',desc: 'Child gives the wrong answer. Robot gently corrects and re-teaches.',      file: 'https://drive.google.com/file/d/PASTE_NAO_Q3_BAD_DRIVE_ID/preview' },
+        { variant: 'partial',   typeLabel: 'Ambiguous Response', title: 'Q3 — Child Answers Unclearly',  desc: 'Child\'s answer is unclear or partial. Robot prompts for clarification.', file: 'https://drive.google.com/file/d/PASTE_NAO_Q3_AMB_DRIVE_ID/preview' },
+      ],
+    },
+    ar1: {
+      progressBar: 'fc-prog-ar1', countEl: 'fc-count-ar1', banner: 'banner-ar1',
+      canvasId: 'fc-canvas-ar1', rootId: 'fc-root-ar1', nodesId: 'fc-nodes-ar1', svgId: 'fc-svg-ar1',
+      lineColor: '#3b82f6', watched: new Set(),
+      intro: { title: 'AI Coach — Verbal Recitation Intro', desc: 'The AI coach introduces the verbal recitation phase and asks the child to recall the four firearm safety rules.', file: 'https://drive.google.com/file/d/PASTE_AR_RECITE_INTRO_DRIVE_ID/preview' },
+      nodes: [
+        { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Knows All Four Rules',    desc: 'Child correctly recites all four steps (Stop, Don\'t Touch, Run Away, Tell an Adult) and the tell-adult phrase. The AI praises them and transitions to the Act Out phase.', file: 'https://drive.google.com/file/d/PASTE_AR_RECITE_CORRECT_DRIVE_ID/preview' },
+        { variant: 'partial',   typeLabel: 'Doesn\'t Know',      title: 'Doesn\'t Know the Rules', desc: 'Child says they don\'t know. The AI walks through each rule one at a time, asking the child to repeat it before moving to the next.', file: 'https://drive.google.com/file/d/PASTE_AR_RECITE_UNKNOWN_DRIVE_ID/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response',  title: 'Says Wrong Rules',        desc: 'Child attempts to recite but states incorrect steps. The AI corrects each mistake and re-prompts until all four rules are said correctly.', file: 'https://drive.google.com/file/d/PASTE_AR_RECITE_WRONG_DRIVE_ID/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response',  title: 'Reaches for the Gun',     desc: 'Child reaches toward the gun during the recitation phase. AR hides it immediately. AI corrects the behavior and resets the scene.', file: 'https://drive.google.com/file/d/PASTE_AR_RECITE_REACHES_DRIVE_ID/preview' },
+      ],
+    },
+    ar2: {
+      progressBar: 'fc-prog-ar2', countEl: 'fc-count-ar2', banner: 'banner-ar2',
+      canvasId: 'fc-canvas-ar2', rootId: 'fc-root-ar2', nodesId: 'fc-nodes-ar2', svgId: 'fc-svg-ar2',
+      lineColor: '#f59e0b', watched: new Set(),
+      intro: { title: 'AI Coach — Act Out Intro', desc: 'The AI coach introduces the physical act-out phase and instructs the child on what to do when they encounter the firearm in AR.', file: 'https://drive.google.com/file/d/PASTE_AR_ACTOUT_INTRO_DRIVE_ID/preview' },
+      nodes: [
+        { variant: 'correct',   typeLabel: 'Correct Response',  title: 'Runs Away & Tells Adult', desc: 'Child retreats ≥1.5m from the gun, then spontaneously calls out to a trusted adult within 3 seconds. The AI praises both actions and completes the training session.', file: 'https://drive.google.com/file/d/PASTE_AR_ACTOUT_CORRECT_DRIVE_ID/preview' },
+        { variant: 'partial',   typeLabel: 'Partial — Prompted', title: 'Runs Away, Forgets to Tell', desc: 'Child runs away correctly but stays silent. After a 3-second window, the AI prompts: "If you found a gun, what would you say to a trusted adult?" Child then completes the step.', file: 'https://drive.google.com/file/d/PASTE_AR_ACTOUT_PARTIAL_DRIVE_ID/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Reaches for the Gun', desc: 'Child reaches toward the gun. AR immediately hides it. AI corrects: "Remember, we never touch a gun. Go back to the red circle and tap to reset." Child must return to start marker.', file: 'https://drive.google.com/file/d/PASTE_AR_ACTOUT_REACHES_DRIVE_ID/preview' },
+      ],
+    },
+    sim: {
+      progressBar: 'fc-prog-sim', countEl: 'fc-count-sim', banner: 'banner-sim',
+      canvasId: 'fc-canvas-sim', rootId: 'fc-root-sim', nodesId: 'fc-nodes-sim', svgId: 'fc-svg-sim',
+      lineColor: '#22c55e', watched: new Set(),
+      intro: { title: 'AI Coach — Simulation Intro', desc: 'The AI coach introduces the in-situ simulation and sets the scene for the child\'s encounter with the firearm.', file: 'https://drive.google.com/file/d/PASTE_SIM_INTRO_DRIVE_ID/preview' },
+      nodes: [
+        { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Does & Says Right Steps', desc: 'Child correctly performs and verbalizes all four steps: Stop, Don\'t Touch, Run Away, Tell an Adult. Observe the positive reinforcement.', file: 'https://drive.google.com/file/d/PASTE_SIM_CORRECT_DRIVE_ID/preview' },
+        { variant: 'partial',   typeLabel: 'Partial — Prompted', title: 'Runs Away, Forgets to Tell', desc: 'Child runs away from the gun but stays silent. After a short pause, the AI prompts the child to tell a trusted adult what happened before completing the scenario.', file: 'https://drive.google.com/file/d/PASTE_SIM_PARTIAL_DRIVE_ID/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Reaches for the Gun', desc: 'Child physically reaches toward or touches the firearm. Observe how the AI system detects and responds.', file: 'https://drive.google.com/file/d/PASTE_SIM_REACHES_DRIVE_ID/preview' },
+      ],
+    },
+  };
+
+  // ── MODAL ──
+  let modalFcId = null, modalIdx = null;
+
+  // ── MODAL ANIMATION ──
+  let modalClosing = false;
+  let activeCardEl = null;
+
+  function setActiveCard(el) {
+    if (activeCardEl && activeCardEl !== el) {
+      activeCardEl.classList.remove('card-active', 'card-hopping');
+    }
+    activeCardEl = el || null;
+    if (el) el.classList.add('card-active');
+  }
+
+  function hopToCard(el) {
+    if (activeCardEl) activeCardEl.classList.remove('card-active', 'card-hopping');
+    activeCardEl = el || null;
+    if (!el) return;
+    el.classList.add('card-active');
+    el.classList.remove('card-hopping');
+    el.offsetWidth; // force reflow to restart animation
+    el.classList.add('card-hopping');
+    el.addEventListener('animationend', () => el.classList.remove('card-hopping'), { once: true });
+  }
+
+  function clearActiveCard() {
+    if (activeCardEl) activeCardEl.classList.remove('card-active', 'card-hopping');
+    activeCardEl = null;
+  }
+
+  function setModalOrigin(triggerEl) {
+    const inner = document.getElementById('modal-inner');
+    const rect = triggerEl ? triggerEl.getBoundingClientRect() : null;
+    if (rect) {
+      const cardCX = rect.left + rect.width / 2;
+      const cardCY = rect.top + rect.height / 2;
+      const vpCX = window.innerWidth / 2;
+      const vpCY = window.innerHeight / 2;
+      const approxModalW = Math.min(920, window.innerWidth - 48);
+      inner.style.setProperty('--mo-x', (cardCX - vpCX) + 'px');
+      inner.style.setProperty('--mo-y', (cardCY - vpCY) + 'px');
+      inner.style.setProperty('--mo-scale', Math.max(0.05, rect.width / approxModalW).toFixed(3));
+    } else {
+      inner.style.setProperty('--mo-x', '0px');
+      inner.style.setProperty('--mo-y', '0px');
+      inner.style.setProperty('--mo-scale', '0.05');
+    }
+  }
+
+  function triggerOpenAnim(triggerEl) {
+    const overlay = document.getElementById('video-modal');
+    const inner   = document.getElementById('modal-inner');
+    setModalOrigin(triggerEl);
+    overlay.classList.add('open');
+    inner.classList.remove('is-closing');
+    inner.classList.remove('is-opening');
+    inner.offsetWidth; // force reflow
+    inner.classList.add('is-opening');
+    requestAnimationFrame(() => overlay.classList.add('modal-bg-ready'));
+  }
+
+  function openIntro(fcId, triggerEl) {
+    const intro = fcData[fcId].intro;
+    modalFcId = fcId; modalIdx = 'intro';
+
+    const tag = document.getElementById('modal-type-tag');
+    tag.textContent = 'Intro Video';
+    tag.className = 'modal-type-tag intro';
+    document.getElementById('modal-title').textContent = intro.title;
+    document.getElementById('modal-desc').textContent = intro.desc;
+    document.getElementById('modal-loading').classList.remove('hidden');
+    document.getElementById('modal-video-help').removeAttribute('open');
+
+    const iframe = document.getElementById('modal-iframe');
+    iframe.onload = () => document.getElementById('modal-loading').classList.add('hidden');
+    iframe.src = intro.file;
+    updateActionBtn(fcId, 'intro');
+    setActiveCard(triggerEl);
+    triggerOpenAnim(triggerEl);
+  }
+
+  function openModal(fcId, idx, triggerEl) {
+    const node = fcData[fcId].nodes[idx];
+    modalFcId = fcId; modalIdx = idx;
+
+    const tag = document.getElementById('modal-type-tag');
+    tag.textContent = node.typeLabel;
+    tag.className = 'modal-type-tag ' + node.variant;
+    document.getElementById('modal-title').textContent = node.title;
+    document.getElementById('modal-desc').textContent = node.desc;
+    document.getElementById('modal-loading').classList.remove('hidden');
+    document.getElementById('modal-video-help').removeAttribute('open');
+
+    const iframe = document.getElementById('modal-iframe');
+    iframe.onload = () => document.getElementById('modal-loading').classList.add('hidden');
+    iframe.src = node.file;
+    updateActionBtn(fcId, idx);
+    setActiveCard(triggerEl);
+    triggerOpenAnim(triggerEl);
+  }
+
+  function closeModal(onDone) {
+    if (modalClosing) return;
+    modalClosing = true;
+    const overlay = document.getElementById('video-modal');
+    const inner   = document.getElementById('modal-inner');
+    overlay.classList.remove('modal-bg-ready');
+    inner.classList.remove('is-opening');
+    inner.offsetWidth;
+    inner.classList.add('is-closing');
+    inner.addEventListener('animationend', function handler() {
+      inner.removeEventListener('animationend', handler);
+      inner.classList.remove('is-closing');
+      const iframe = document.getElementById('modal-iframe');
+      iframe.onload = null; iframe.src = '';
+      document.getElementById('modal-loading').classList.remove('hidden');
+      overlay.classList.remove('open');
+      modalFcId = null; modalIdx = null;
+      modalClosing = false;
+      if (onDone) onDone();
+    });
+  }
+
+  function getNextIdx(fcId, idx) {
+    if (idx === 'intro') return 0;
+    const next = idx + 1;
+    return next < fcData[fcId].nodes.length ? next : null;
+  }
+
+  function doMarkWatched(fcId, idx) {
+    const fc = fcData[fcId];
+    if (fc.watched.has(idx)) return;
+    fc.watched.add(idx);
+    if (idx === 'intro') {
+      document.getElementById('fc-root-' + fcId)?.classList.add('watched', 'intro-watched');
+    } else {
+      document.querySelector(`.fc-node[data-fc="${fcId}"][data-idx="${idx}"]`)?.classList.add('watched');
+    }
+    const total = fc.nodes.length + 1;
+    const pct = (fc.watched.size / total) * 100;
+    document.getElementById(fc.progressBar).style.width = pct + '%';
+    document.getElementById(fc.countEl).textContent = fc.watched.size + ' / ' + total;
+    if (fc.watched.size === total) document.getElementById(fc.banner).classList.add('visible');
+    drawConnectors(fcId);
+  }
+
+  function markWatchedAndClose() {
+    if (modalFcId !== null && modalIdx !== null) doMarkWatched(modalFcId, modalIdx);
+    closeModal(() => clearActiveCard());
+  }
+
+  function markWatchedAndContinue() {
+    if (modalFcId === null || modalIdx === null) { closeModal(() => clearActiveCard()); return; }
+    const fcId = modalFcId, idx = modalIdx;
+    const nextIdx = getNextIdx(fcId, idx);
+    doMarkWatched(fcId, idx);
+    closeModal(() => {
+      if (nextIdx !== null) {
+        const nextEl = document.querySelector(`.fc-node[data-fc="${fcId}"][data-idx="${nextIdx}"]`);
+        nextEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Hop the glow to the next card, then open its modal from there
+        setTimeout(() => {
+          hopToCard(nextEl);
+          setTimeout(() => openModal(fcId, nextIdx, nextEl), 560);
+        }, nextEl ? 640 : 160);
+      } else {
+        clearActiveCard();
+      }
+    });
+  }
+
+  function updateActionBtn(fcId, idx) {
+    const btn = document.getElementById('modal-action-btn');
+    const hasNext = getNextIdx(fcId, idx) !== null;
+    if (hasNext) {
+      btn.textContent = '✓ Mark as Watched & Continue →';
+      btn.onclick = markWatchedAndContinue;
+    } else {
+      btn.textContent = '✓ Mark as Watched & Close';
+      btn.onclick = markWatchedAndClose;
+    }
+  }
+
+  document.getElementById('video-modal').addEventListener('click', e => { if (e.target === document.getElementById('video-modal')) closeModal(); });
+
+  // ── SVG CONNECTORS ──
+  function drawConnectors(fcId) {
+    const fc = fcData[fcId];
+    if (!fc.svgId) return; // linear layouts (e.g. nao) have no SVG
+    const svg = document.getElementById(fc.svgId);
+    const canvas = document.getElementById(fc.canvasId);
+    const root = document.getElementById(fc.rootId);
+    const nodes = document.querySelectorAll(`.fc-node[data-fc="${fcId}"]`);
+    if (!svg || !canvas || !root) return;
+    svg.innerHTML = '';
+    const cr = canvas.getBoundingClientRect();
+    const rr = root.getBoundingClientRect();
+    const rx = rr.left - cr.left + rr.width / 2;
+    const ry = rr.bottom - cr.top;
+    nodes.forEach(node => {
+      const nr = node.getBoundingClientRect();
+      const nx = nr.left - cr.left + nr.width / 2;
+      const ny = nr.top - cr.top;
+      const watched = node.classList.contains('watched');
+      const my = (ry + ny) / 2;
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', `M ${rx} ${ry} C ${rx} ${my}, ${nx} ${my}, ${nx} ${ny}`);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', fc.lineColor);
+      path.setAttribute('stroke-width', watched ? '2.5' : '2');
+      path.setAttribute('stroke-dasharray', watched ? 'none' : '6 4');
+      path.setAttribute('opacity', watched ? '0.9' : '0.3');
+      svg.appendChild(path);
+    });
+  }
+
+  window.addEventListener('resize', () => {
+    document.querySelectorAll('.slide-flowchart.active').forEach(s => { if (s.dataset.fc) drawConnectors(s.dataset.fc); });
+  });
+
+  // ── SLIDES ──
+  const slides = document.querySelectorAll('.slide');
+  const totalSlides = slides.length;
+  let current = 0;
+  const progressBar = document.getElementById('step-progress');
+  document.getElementById('total-steps').textContent = totalSlides;
+
+  slides.forEach((slide, i) => {
+    if (i > 0) { const a = document.createElement('span'); a.className = 'step-arrow'; a.textContent = '›'; progressBar.appendChild(a); }
+    const pill = document.createElement('div');
+    pill.className = 'step-pill';
+    pill.innerHTML = `<span class="dot"></span>${slide.dataset.label || 'Step '+(i+1)}`;
+    pill.onclick = () => goTo(i); pill.id = 'pill-' + i;
+    progressBar.appendChild(pill);
+  });
+
+  function goTo(n) {
+    slides[current].classList.remove('active');
+    document.getElementById('pill-' + current)?.classList.remove('active');
+    if (current < n) document.getElementById('pill-' + current)?.classList.add('done');
+    current = Math.max(0, Math.min(n, totalSlides - 1));
+    slides[current].classList.add('active');
+    slides[current].scrollTop = 0;
+    const pill = document.getElementById('pill-' + current);
+    pill?.classList.add('active'); pill?.classList.remove('done');
+    pill?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    document.getElementById('current-step-num').textContent = current + 1;
+    document.getElementById('slide-counter').textContent = `${current + 1} / ${totalSlides}`;
+    document.getElementById('btn-prev').disabled = current === 0;
+    document.getElementById('btn-next').disabled = current === totalSlides - 1;
+    document.getElementById('btn-next').textContent = current === totalSlides - 1 ? 'Finish' : 'Next →';
+    const fcId = slides[current].dataset.fc;
+    if (fcId) requestAnimationFrame(() => drawConnectors(fcId));
+  }
+
+  function nextSlide() { goTo(current + 1); }
+  function prevSlide() { goTo(current - 1); }
+
+  document.addEventListener('keydown', e => {
+    if (document.getElementById('video-modal').classList.contains('open')) { if (e.key === 'Escape') closeModal(); return; }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); nextSlide(); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); prevSlide(); }
+  });
+
+  function copySurvey(spanId, btn) {
+    const text = document.getElementById(spanId).textContent.trim();
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied!'; btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy Link'; btn.classList.remove('copied'); }, 2000);
+    });
+  }
+
+  goTo(0);
+</script>
+</body>
+</html>

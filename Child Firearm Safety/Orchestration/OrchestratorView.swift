@@ -12,6 +12,7 @@ struct OrchestratorView: View {
     @StateObject private var orch = Orchestrator()
     @StateObject private var coach = VoiceCoach()
     @AppStorage("cardboardMode") private var cardboardMode = false
+    @AppStorage("sessionRecordingEnabled") private var sessionRecordingEnabled = false
 
     @State private var isArmed = false
     @State private var clearTick = 0
@@ -25,7 +26,10 @@ struct OrchestratorView: View {
     @State private var showCamera = false
     @State private var hasConfiguredObserver = false
     @State private var showCompletionScreen = false
+    @State private var isSessionRecordingActive = false
+    @State private var assetsConfiguredObserver: NSObjectProtocol?
     @State private var completionObserver: NSObjectProtocol?
+    @State private var loadingMappingStatus = "Waiting for relocalization"
 
     var body: some View {
         Group {
@@ -51,6 +55,7 @@ struct OrchestratorView: View {
                     EquatableView(content: StableARSceneView(
                         isArmed: $isArmed,
                         clearTick: $clearTick,
+                        shouldRecordSession: isSessionRecordingActive && cardboardMode,
                         onDisarm: { isArmed = false },
                         onSceneAppear: handleSceneAppear,
                         onExit: {
@@ -58,10 +63,6 @@ struct OrchestratorView: View {
                             dismiss()
                         }
                     ))
-                    .onDisappear {
-                        stopSession()
-                        cleanup()
-                    }
                     .opacity(showCamera ? 1 : 0)
 
                     // Microphone state indicator (top-right)
@@ -86,7 +87,16 @@ struct OrchestratorView: View {
                     }
 
                     if showLoadingScreen {
-                        LoadingScreenView()
+                        LoadingScreenView(
+                            onExit: {
+                                stopSession()
+                                cleanup()
+                                selectedRoom = nil
+                                didAutoLoad = false
+                                didAutoStart = false
+                            },
+                            debugInfo: LoadingDebugInfo(mappingStatus: loadingMappingStatus)
+                        )
                     }
 
                     if showStartPrompt {
@@ -95,8 +105,12 @@ struct OrchestratorView: View {
                                 showStartPrompt = false
                                 showCamera = true
                             }
+                            isSessionRecordingActive = sessionRecordingEnabled
                             orch.startSession()
                             coach.startSession()
+                            if sessionRecordingEnabled && !cardboardMode {
+                                SessionScreenRecorder.shared.startIfNeeded()
+                            }
                         }
                     }
 
@@ -116,6 +130,22 @@ struct OrchestratorView: View {
                 // HIDE NAV BAR only while in AR scene
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationBarBackButtonHidden(true)
+                .onDisappear {
+                    if selectedRoom != nil {
+                        stopSession()
+                        cleanup()
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .mappingStatusChanged)) { note in
+                    let rawValue = note.userInfo?["status"] as? Int ?? 0
+                    switch rawValue {
+                    case 0: loadingMappingStatus = "Not Available"
+                    case 1: loadingMappingStatus = "Limited"
+                    case 2: loadingMappingStatus = "Extending"
+                    case 3: loadingMappingStatus = "Mapped"
+                    default: loadingMappingStatus = "Unknown"
+                    }
+                }
             }
         }
     }
@@ -133,7 +163,7 @@ struct OrchestratorView: View {
         // Listen for assets configured notification - only add observer once
         if !hasConfiguredObserver {
             hasConfiguredObserver = true
-            NotificationCenter.default.addObserver(
+            assetsConfiguredObserver = NotificationCenter.default.addObserver(
                 forName: .assetsConfigured,
                 object: nil,
                 queue: .main
@@ -171,6 +201,10 @@ struct OrchestratorView: View {
     }
 
     private func stopSession() {
+        isSessionRecordingActive = false
+        if sessionRecordingEnabled && !cardboardMode {
+            SessionScreenRecorder.shared.stopIfNeeded()
+        }
         orch.stopSession()
         coach.stopSession()
     }
@@ -180,7 +214,10 @@ struct OrchestratorView: View {
         coach.cleanup()
         orch.cleanup()
 
-        NotificationCenter.default.removeObserver(self, name: .assetsConfigured, object: nil)
+        if let observer = assetsConfiguredObserver {
+            NotificationCenter.default.removeObserver(observer)
+            assetsConfiguredObserver = nil
+        }
         hasConfiguredObserver = false
 
         // Clean up completion observer
@@ -194,6 +231,7 @@ struct OrchestratorView: View {
         showStartPrompt = false
         showCamera = false
         showCompletionScreen = false
+        loadingMappingStatus = "Waiting for relocalization"
     }
 
     private func phaseLabel(_ p: SessionPhase) -> String {

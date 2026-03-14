@@ -53,6 +53,7 @@ final class LiveMicController {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var lastPrintedTranscript: String = ""
+    private var recognitionRestartTask: Task<Void, Never>?
 
     // Two-tier VAD system:
     // - Short pause for UI feedback (1.2s)
@@ -135,6 +136,8 @@ final class LiveMicController {
                 self.shortPauseTimer = nil
                 self.longPauseTimer?.cancel()
                 self.longPauseTimer = nil
+                self.recognitionRestartTask?.cancel()
+                self.recognitionRestartTask = nil
                 self.stopSpeechRecognition()
             }
 
@@ -413,6 +416,17 @@ final class LiveMicController {
                 print("⚠️ [LiveMic] Speech recognition error: \(error.localizedDescription)")
                 self.recognitionTask?.cancel()
                 self.recognitionTask = nil
+
+                guard self.isRunning else { return }
+
+                self.recognitionRestartTask?.cancel()
+                self.recognitionRestartTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard self.isRunning else { return }
+                    print("🔁 [LiveMic] Restarting speech recognition after transient error")
+                    self.startSpeechRecognition()
+                }
             }
         }
     }
@@ -424,8 +438,10 @@ final class LiveMicController {
 
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
+        recognitionRestartTask?.cancel()
         recognitionRequest = nil
         recognitionTask = nil
+        recognitionRestartTask = nil
         lastPrintedTranscript = ""
     }
 }

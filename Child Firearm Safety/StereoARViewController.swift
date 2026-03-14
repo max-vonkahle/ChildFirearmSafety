@@ -9,6 +9,7 @@ import UIKit
 import ARKit
 import SceneKit
 import MetalKit
+import AVFoundation
 import Vision
 
 final class StereoARViewController: UIViewController, ARSessionDelegate {
@@ -32,12 +33,15 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     var testingRoomId: String?
     var onTestingSceneReady: (() -> Void)?
     var onTestingAlignmentStatus: ((StartPositionAlignmentStatus?) -> Void)?
+    var onTestingWorldMappingStatus: ((String) -> Void)?
     var onTestingStartTransformLoaded: ((simd_float4x4?) -> Void)?
     var testingActiveStage: TestingStage = .kitchen
     var testingAlignmentTrackingEnabled: Bool = false
     private var testingAssetTransforms: [String: simd_float4x4] = [:]
     private var testingStartCameraTransform: simd_float4x4?
     private var testingAssetsPlaced = false
+    private var lastReportedTestingWorldMappingStatus: String?
+    private var lastReportedTestingAlignmentStatus: StartPositionAlignmentStatus?
     private var relocalizationTimer: Timer?
     private var testingStageNodes: [SCNNode] = []
 
@@ -49,6 +53,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var textureCache: CVMetalTextureCache!
     private var pipelineState: MTLRenderPipelineState!
     private var sampler: MTLSamplerState!
+    private lazy var recordingCIContext = CIContext(options: [.cacheIntermediates: false])
+    private var recordingRenderer: SCNRenderer?
 
     // SceneKit views (overlays for 3D content)
     private var leftSCNView: SCNView!
@@ -64,6 +70,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var isWaitingForStartMarker: Bool = false  // Tap blocked until child walks to red X
     private var isWaitingForActOutStart: Bool = false
     private var isEncounterDetectionEnabled: Bool = false
+    private var isTestingStageAdvancePending: Bool = false
 
     // Occlusion overlay views (renders camera where person is detected, on top of 3D)
     private var leftOcclusionView: MTKView!
@@ -81,6 +88,11 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var lastBaseProjectionTransform: SCNMatrix4?
     private var leftEyePassthroughYOffset: CGFloat = 0
     private var rightEyePassthroughYOffset: CGFloat = 0
+    var shouldRecordSession = false
+    private var sessionVideoRecorder: StereoSessionVideoRecorder?
+    private let recordingQueue = DispatchQueue(label: "com.childgunsafety.stereo.recording", qos: .utility)
+    private var lastRecordedFrameTime: TimeInterval = 0
+    private let recordingFrameInterval: TimeInterval = 1.0 / 12.0
 
     // Gesture detection (hand pose)
     private let handRequest = VNDetectHumanHandPoseRequest()
@@ -97,6 +109,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     var warningShown: Bool = false
     private var lastReachGestureFrame: Int = 0
     private var currentFrameNumber: Int = 0
+    private var overlapReachStreak: Int = 0
 
     // Proximity tracking
     private var wasNear: Bool = false
@@ -105,6 +118,10 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private var isRetreating: Bool = false
     private var retreatStartDistance: Float = 0
     private var retreatStartTime: CFTimeInterval = 0
+    // Settle tracking: fires childRunsAway only once the child has stopped moving
+    private var isAwaitingSettlement: Bool = false
+    private var settlePeakDistance: Float = 0
+    private var lastSignificantMoveTime: CFTimeInterval = 0
 
     // Start position floor marker
     private var startMarkerNode: SCNNode?
@@ -114,12 +131,11 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // Tuning knobs (matching ARCoordinator)
     private let pixelPadding: CGFloat = 24
     private let depthMargin: Float = 0.07
-    private let maxReachDistance: Float = 0.2  // Hand must be within 0.5m of gun depth to count as reaching
+    private let maxReachDistance: Float = 0.25 // Match non-stereo testing path so stereo is not stricter
     private let retreatStartThreshold: Float = 0.15
-    private let runAwayThreshold: Float = 1.5
-    private let runAwayMaxTime: CFTimeInterval = 2.0
-    private let backAwayThreshold: Float = 0.7
-    private let backAwayMaxTime: CFTimeInterval = 3.0
+    private let runAwayThreshold: Float = 5.0
+    private let settleThreshold: Float = 0.15   // movement smaller than this = "stopped"
+    private let settleTime: CFTimeInterval = 1.5 // seconds stable before childRunsAway fires
 
     // Adjustable parameters for I/O 2015 Cardboard (matching ARFun)
     private let eyeFOV: CGFloat = 60.0
@@ -299,6 +315,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         // Add lighting to the scene
         setupSceneLighting()
+        recordingRenderer = makeRecordingRenderer()
 
         // Gun model will be added when anchor is loaded via session(_:didAdd:)
 
@@ -375,6 +392,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopSessionRecordingIfNeeded()
         relocalizationTimer?.invalidate()
         session.pause()
     }
@@ -396,9 +414,107 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     }
 
     deinit {
+        stopSessionRecordingIfNeeded()
         relocalizationTimer?.invalidate()
         clearPixelBuffers()
         NotificationCenter.default.removeObserver(self)
+    }
+
+    private func makeRecordingRenderer() -> SCNRenderer? {
+        guard let metalDevice else { return nil }
+        let renderer = SCNRenderer(device: metalDevice, options: nil)
+        renderer.scene = scene
+        renderer.pointOfView = baseCameraNode
+        renderer.autoenablesDefaultLighting = false
+        return renderer
+    }
+
+    private func ensureSessionRecordingStarted() {
+        guard shouldRecordSession, sessionVideoRecorder == nil else { return }
+
+        let sessionName = testingRoomId == nil ? "training" : "testing"
+        do {
+            sessionVideoRecorder = try StereoSessionVideoRecorder(sessionName: sessionName)
+            lastRecordedFrameTime = 0
+            print("🎥 [Stereo] Started mono session recording")
+        } catch {
+            print("⚠️ [Stereo] Failed to start mono recording: \(error.localizedDescription)")
+            shouldRecordSession = false
+        }
+    }
+
+    private func stopSessionRecordingIfNeeded() {
+        guard let recorder = sessionVideoRecorder else { return }
+        sessionVideoRecorder = nil
+
+        recorder.finish { url in
+            guard let url else { return }
+            let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            UIApplication.presentFromTop(activity)
+        }
+        print("🎥 [Stereo] Stopped mono session recording")
+    }
+
+    private func recordFrameIfNeeded(_ frame: ARFrame) {
+        guard shouldRecordSession else {
+            stopSessionRecordingIfNeeded()
+            return
+        }
+
+        ensureSessionRecordingStarted()
+
+        guard let recorder = sessionVideoRecorder,
+              frame.timestamp - lastRecordedFrameTime >= recordingFrameInterval,
+              let recordingRenderer else { return }
+
+        lastRecordedFrameTime = frame.timestamp
+        let renderTime = CACurrentMediaTime()
+        let pixelBuffer = frame.capturedImage
+        let viewportSize = recorder.videoSize
+        let ciContext = recordingCIContext
+        let presentationTime = CMTime(seconds: frame.timestamp, preferredTimescale: 600)
+
+        recordingQueue.async { [weak self] in
+            guard let self else { return }
+            autoreleasepool {
+                let overlay = recordingRenderer.snapshot(
+                    atTime: renderTime,
+                    with: viewportSize,
+                    antialiasingMode: .multisampling4X
+                )
+
+                guard let cameraImage = self.makeRecordingCameraImage(from: pixelBuffer, targetSize: viewportSize) else {
+                    return
+                }
+
+                let composed = UIGraphicsImageRenderer(size: viewportSize).image { _ in
+                    cameraImage.draw(in: CGRect(origin: .zero, size: viewportSize))
+                    overlay.draw(in: CGRect(origin: .zero, size: viewportSize))
+                }
+
+                recorder.append(image: composed, at: presentationTime, ciContext: ciContext)
+            }
+        }
+    }
+
+    private func makeRecordingCameraImage(from pixelBuffer: CVPixelBuffer, targetSize: CGSize) -> UIImage? {
+        let sourceImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
+        let extent = sourceImage.extent.integral
+        guard let cgImage = recordingCIContext.createCGImage(sourceImage, from: extent) else {
+            return nil
+        }
+
+        let image = UIImage(cgImage: cgImage)
+        let sourceSize = image.size
+        guard sourceSize.width > 0, sourceSize.height > 0 else { return image }
+
+        let scale = max(targetSize.width / sourceSize.width, targetSize.height / sourceSize.height)
+        let drawSize = CGSize(width: sourceSize.width * scale, height: sourceSize.height * scale)
+        let origin = CGPoint(x: (targetSize.width - drawSize.width) / 2, y: (targetSize.height - drawSize.height) / 2)
+
+        return UIGraphicsImageRenderer(size: targetSize).image { _ in
+            image.draw(in: CGRect(origin: origin, size: drawSize))
+        }
     }
 
     // Keep camera aligned to ARKit head pose + store pixel buffer for GPU rendering
@@ -438,17 +554,30 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         currentGunDepth = gunDepthFromCamera(frame: frame) ?? 0.0
         currentDisplayToCameraTransform = displayToCameraTransform
         frameLock.unlock()
+        currentFrameNumber += 1
+        recordFrameIfNeeded(frame)
 
         if testingRoomId != nil {
-            if testingAlignmentTrackingEnabled, let testingStartCameraTransform {
+            let mappingStatus = frame.worldMappingStatus.debugDescription
+            if mappingStatus != lastReportedTestingWorldMappingStatus {
+                lastReportedTestingWorldMappingStatus = mappingStatus
+                DispatchQueue.main.async { [weak self] in
+                    self?.onTestingWorldMappingStatus?(mappingStatus)
+                }
+            }
+            if let testingStartCameraTransform {
                 let status = RoomLibrary.startAlignmentStatus(
                     currentCameraTransform: frame.camera.transform,
                     targetStartTransform: testingStartCameraTransform
                 )
-                DispatchQueue.main.async { [weak self] in
-                    self?.onTestingAlignmentStatus?(status)
+                if status != lastReportedTestingAlignmentStatus {
+                    lastReportedTestingAlignmentStatus = status
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onTestingAlignmentStatus?(status)
+                    }
                 }
-            } else {
+            } else if lastReportedTestingAlignmentStatus != nil {
+                lastReportedTestingAlignmentStatus = nil
                 DispatchQueue.main.async { [weak self] in
                     self?.onTestingAlignmentStatus?(nil)
                 }
@@ -486,6 +615,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 }
             }
         }
+
+        processStartMarkerProximityIfNeeded(frame: frame)
 
         // Gesture detection (only when gun is visible)
         if gunNode != nil && !warningShown {
@@ -568,24 +699,12 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     private func makeStartMarkerNode() -> SCNNode {
         let container = SCNNode()
 
-        // Flat red disk
+        // Flat red disk matching the non-stereo start marker.
         let disk = SCNCylinder(radius: 0.3, height: 0.005)
         disk.firstMaterial?.diffuse.contents = UIColor.systemRed.withAlphaComponent(0.85)
         disk.firstMaterial?.lightingModel = .constant  // Unlit so it's always visible
         let diskNode = SCNNode(geometry: disk)
         container.addChildNode(diskNode)
-
-        // White X — two crossed bars on top of the disk
-        let bar = SCNBox(width: 0.5, height: 0.01, length: 0.07, chamferRadius: 0)
-        bar.firstMaterial?.diffuse.contents = UIColor.white.withAlphaComponent(0.9)
-        bar.firstMaterial?.lightingModel = .constant
-        let bar1Node = SCNNode(geometry: bar)
-        bar1Node.position = SCNVector3(0, 0.007, 0)
-        let bar2Node = SCNNode(geometry: bar)
-        bar2Node.position = SCNVector3(0, 0.007, 0)
-        bar2Node.eulerAngles = SCNVector3(0, Float.pi / 2, 0)
-        container.addChildNode(bar1Node)
-        container.addChildNode(bar2Node)
 
         return container
     }
@@ -593,9 +712,31 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
     // MARK: - Gun Model and World Map Loading
 
     private func setupSceneLighting() {
-        // Enable automatic default lighting to match RealityKit's behavior in regular AR view
-        leftSCNView.autoenablesDefaultLighting = true
-        rightSCNView.autoenablesDefaultLighting = true
+        // Do NOT use autoenablesDefaultLighting — it adds a single omni light that
+        // blows out PBR materials (metalness → specular blowout → everything looks white).
+        leftSCNView.autoenablesDefaultLighting = false
+        rightSCNView.autoenablesDefaultLighting = false
+
+        // Ambient fill — prevents pure black in shadow areas
+        let ambientNode = SCNNode()
+        let ambient = SCNLight()
+        ambient.type = .ambient
+        ambient.color = UIColor(white: 0.25, alpha: 1)
+        ambientNode.light = ambient
+        scene.rootNode.addChildNode(ambientNode)
+
+        // Directional key light — gives shape and depth
+        let directionalNode = SCNNode()
+        let directional = SCNLight()
+        directional.type = .directional
+        directional.color = UIColor(white: 0.9, alpha: 1)
+        directional.intensity = 1000
+        directionalNode.eulerAngles = SCNVector3(-Float.pi / 4, Float.pi / 6, 0) // 45° down, slight side angle
+        directionalNode.light = directional
+        scene.rootNode.addChildNode(directionalNode)
+
+        // Soft environment IBL — helps PBR materials read correct base colors
+        scene.lightingEnvironment.intensity = 0.5
     }
 
     private func preloadModel(named assetName: String) {
@@ -719,18 +860,47 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             // If gun is hidden (reset scenario), block tap until child walks to the marker
             if warningShown {
                 isWaitingForStartMarker = true
+                isTestingStageAdvancePending = false
                 print("📍 [Stereo] Start marker shown — tap blocked until child reaches marker")
             } else {
+                if testingRoomId != nil {
+                    isWaitingForStartMarker = true
+                    isTestingStageAdvancePending = true
+                }
                 print("📍 [Stereo] Start marker shown (act-out start)")
             }
         } else if command == "hideStartMarker" {
             startMarkerNode?.isHidden = true
             isWaitingForStartMarker = false
             isWaitingForActOutStart = false
+            isTestingStageAdvancePending = false
         }
     }
 
     @objc private func handleTap(_ sender: UITapGestureRecognizer) {
+        if isTestingStageAdvancePending {
+            if isWaitingForStartMarker {
+                if let markerPos = startMarkerWorldPosition,
+                   let frame = session.currentFrame {
+                    let cam = frame.camera.transform.columns.3
+                    let dx = cam.x - markerPos.x
+                    let dz = cam.z - markerPos.z
+                    let dist = sqrtf(dx * dx + dz * dz)
+                    print("⏭️ [Stereo] Tap ignored - \(String(format: "%.2f", dist))m from marker (need ≤\(markerReachDistance)m)")
+                } else {
+                    print("⏭️ [Stereo] Tap ignored - child hasn't reached the start marker yet (position unavailable)")
+                }
+                return
+            }
+
+            print("✅ [Stereo] User tapped to advance testing stage - posting userTappedToReset event")
+            isTestingStageAdvancePending = false
+            startMarkerNode?.isHidden = true
+            NotificationCenter.default.post(name: arEventNotification, object: nil,
+                userInfo: [BusKey.arevent: AREvent.userTappedToReset])
+            return
+        }
+
         if isWaitingForActOutStart {
             if isWaitingForResetSpeech {
                 print("⏭️ [Stereo] Tap ignored - waiting for model to finish act-out instructions")
@@ -753,7 +923,8 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
             print("✅ [Stereo] User tapped to begin act-out - posting userTappedToBeginActOut event")
             isWaitingForActOutStart = false
             isEncounterDetectionEnabled = true
-            wasNear = false
+            wasNear = true                             // start tracking immediately; no near-zone requirement
+            lastNearDistance = .greatestFiniteMagnitude  // first frame sets actual distance
             isRetreating = false
             startMarkerNode?.isHidden = true
             NotificationCenter.default.post(name: arEventNotification, object: nil,
@@ -915,6 +1086,14 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
         warningShown = false
         lastReachGestureFrame = 0  // Allow detection on next encounter
+        overlapReachStreak = 0
+        if testingRoomId != nil {
+            // Re-arm retreat detection only after the child approaches the gun again.
+            wasNear = false
+            lastNearDistance = 0
+            isRetreating = false
+            isAwaitingSettlement = false
+        }
     }
 
     // MARK: - Testing Mode
@@ -968,8 +1147,36 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         gunNodes.removeAll()
     }
 
+    private func placeTestingStartMarkerIfAvailable() {
+        guard startMarkerNode == nil,
+              let markerTransform = testingAssetTransforms["startMarker"] else { return }
+
+        let markerNode = makeStartMarkerNode()
+        let containerNode = SCNNode()
+        containerNode.simdTransform = markerTransform
+        containerNode.addChildNode(markerNode)
+        containerNode.isHidden = true
+        scene.rootNode.addChildNode(containerNode)
+        startMarkerNode = containerNode
+
+        let col = markerTransform.columns.3
+        startMarkerWorldPosition = SIMD3<Float>(col.x, col.y, col.z)
+        print("📍 [Stereo] Start marker restored from saved testing transform — hidden until needed")
+    }
+
     private func placeTestingAssets() {
         clearCurrentTestingStageNodes()
+        placeTestingStartMarkerIfAvailable()
+
+        // Enable proximity/retreat detection for this testing stage, but require a real
+        // near-gun encounter before retreat can arm. Pre-arming from an arbitrary camera
+        // position creates false "run away" detections during intro/setup.
+        isEncounterDetectionEnabled = true
+        wasNear = false
+        lastNearDistance = 0
+        isRetreating = false
+        isAwaitingSettlement = false
+        overlapReachStreak = 0
 
         let stage = testingActiveStage
         let fallbackStage: TestingStage = .kitchen
@@ -1222,7 +1429,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         let height = view.bounds.height
 
         // Reticle parameters
-        let reticleSize: CGFloat = 20  // Size of the dot
+        let reticleSize: CGFloat = 10  // Reduced by 50% so the reticle is less dominant
 
         // Optical center offset (tuned for your I/O 2015 Cardboard)
         let opticalCenterRatio: CGFloat = 0.45
@@ -1396,13 +1603,27 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
     // MARK: - Gesture Detection
 
+    private func processStartMarkerProximityIfNeeded(frame: ARFrame) {
+        guard startMarkerNode?.isHidden == false,
+              isWaitingForStartMarker,
+              let markerPos = startMarkerWorldPosition else { return }
+
+        let cam = frame.camera.transform.columns.3
+        let dx = cam.x - markerPos.x
+        let dz = cam.z - markerPos.z
+        let xzDist = sqrt(dx * dx + dz * dz)
+        if xzDist <= markerReachDistance {
+            isWaitingForStartMarker = false
+            NotificationCenter.default.post(name: arEventNotification, object: nil,
+                userInfo: [BusKey.arevent: AREvent.childAtStartMarker])
+        }
+    }
+
     private func processGestureDetection(frame: ARFrame) {
         // Prevent overlapping processing
         if isProcessingGesture { return }
         isProcessingGesture = true
         defer { isProcessingGesture = false }
-
-        currentFrameNumber += 1
 
         // Debug: log that we're processing
         if currentFrameNumber % 1000 == 0 {
@@ -1445,46 +1666,39 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                         // Measure from closest point ever reached (lastNearDistance), not from retreat start
                         let retreatDistance = d - lastNearDistance
 
-                        // Check for running away
-                        if retreatDistance > runAwayThreshold, retreatElapsed < runAwayMaxTime {
-                            wasNear = false
-                            isRetreating = false
-                            print("🏃 [Stereo-Retreat] childRunsAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
-                            NotificationCenter.default.post(name: arEventNotification, object: nil,
-                                userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)])
-                        }
-                        // Fall back to backing away
-                        else if retreatDistance > backAwayThreshold, retreatElapsed < backAwayMaxTime {
-                            wasNear = false
-                            isRetreating = false
-                            print("🚶 [Stereo-Retreat] childBacksAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
-                            NotificationCenter.default.post(name: arEventNotification, object: nil,
-                                userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)])
+                        // Check for running away — wait for child to stop before firing
+                        if retreatDistance > runAwayThreshold {
+                            if !isAwaitingSettlement {
+                                // Just crossed threshold — enter settle wait
+                                isAwaitingSettlement = true
+                                settlePeakDistance = d
+                                lastSignificantMoveTime = tNow
+                                print("📍 [Stereo-Retreat] Run-away threshold crossed at d=\(String(format: "%.2f", d))m — waiting for child to stop")
+                            } else if d > settlePeakDistance + settleThreshold {
+                                // Still moving further away — reset settle timer
+                                settlePeakDistance = d
+                                lastSignificantMoveTime = tNow
+                            } else if tNow - lastSignificantMoveTime >= settleTime {
+                                // Stable for settleTime — child has stopped, fire the event
+                                wasNear = false
+                                isRetreating = false
+                                isAwaitingSettlement = false
+                                lastNearDistance = 0
+                                print("🏃 [Stereo-Retreat] childRunsAway fired! delta=\(String(format: "%.2f", retreatDistance))m, settled at d=\(String(format: "%.2f", d))m")
+                                NotificationCenter.default.post(name: arEventNotification, object: nil,
+                                    userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)])
+                            }
                         }
                     }
 
                     let prevNearDistance = lastNearDistance
                     lastNearDistance = min(lastNearDistance, d)
-                    // If user returned closer, reset retreat so the next walk-away gets a fresh timer
-                    if lastNearDistance < prevNearDistance && isRetreating {
-                        print("📍 [Stereo-Retreat] User returned closer (d=\(String(format: "%.2f", d))m) — resetting retreat timer")
+                    // If user returned closer, reset retreat and any pending settlement
+                    if lastNearDistance < prevNearDistance && (isRetreating || isAwaitingSettlement) {
+                        print("📍 [Stereo-Retreat] User returned closer (d=\(String(format: "%.2f", d))m) — resetting retreat")
                         isRetreating = false
+                        isAwaitingSettlement = false
                     }
-                }
-            }
-
-            // Start marker proximity check — hide marker and fire event when child walks to it
-            if startMarkerNode?.isHidden == false,
-               isWaitingForStartMarker,
-               let markerPos = startMarkerWorldPosition {
-                let cam = frame.camera.transform.columns.3
-                let dx = cam.x - markerPos.x
-                let dz = cam.z - markerPos.z
-                let xzDist = sqrt(dx * dx + dz * dz)
-                if xzDist <= markerReachDistance {
-                    isWaitingForStartMarker = false
-                    NotificationCenter.default.post(name: arEventNotification, object: nil,
-                        userInfo: [BusKey.arevent: AREvent.childAtStartMarker])
                 }
             }
 
@@ -1521,7 +1735,12 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 print("👋 [Stereo-Gesture] Found \(observations.count) hands")
             }
 
-            guard !observations.isEmpty else { return }
+            guard !observations.isEmpty else {
+                if currentFrameNumber % 120 == 0 {
+                    print("⚠️ [Stereo-Gesture] No hands detected by Vision, so reachGesture cannot fire")
+                }
+                return
+            }
 
             guard let gunRect = gunScreenRect() else {
                 if currentFrameNumber % 60 == 0 {
@@ -1536,6 +1755,9 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
 
             // Check hands against gun rect + depth
             var handCheckCount = 0
+            var didCheckAnyProjectedHand = false
+            var didHitGunRect = false
+            var depthRejectedCount = 0
             for hand in observations {
                 let pts = (try? hand.recognizedPoints(.all)) ?? [:]
                 for key in [VNHumanHandPoseObservation.JointName.indexTip,
@@ -1547,6 +1769,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                         // Hand is outside left eye's visible range - skip it
                         continue
                     }
+                    didCheckAnyProjectedHand = true
                     handCheckCount += 1
 
                     // NEW DEBUG: Print Vision raw -> Screen mapping
@@ -1563,6 +1786,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                         }
                         continue
                     }
+                    didHitGunRect = true
 
                     print("✋ [Stereo-Gesture] Hand INSIDE gun rect! Point: \(hp)")
 
@@ -1587,29 +1811,67 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                         let isWithinReachDistance = gunZ - handZ < maxReachDistance
                         
                         if isCloserThanGun && isWithinReachDistance {
-                            // Prevent duplicate events in same frame
-                            guard currentFrameNumber != lastReachGestureFrame else {
-                                print("⏭️ [Stereo-Gesture] Already posted in frame \(currentFrameNumber)")
-                                continue
-                            }
-                            lastReachGestureFrame = currentFrameNumber
-
-                            print("🚨 [Stereo-Gesture] REACH GESTURE DETECTED! Hiding gun...")
-                            warningShown = true
-                            hideGun()
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            NotificationCenter.default.post(name: arEventNotification, object: nil,
-                                userInfo: [BusKey.arevent: AREvent.reachGesture])
+                            triggerReachGesture(reason: "depth gate passed")
                             return
                         } else {
-                            // print("❌ [Stereo-Gesture] Hand not closer than gun (handZ + margin >= gunZ)")
+                            depthRejectedCount += 1
+                            if currentFrameNumber % 60 == 0 {
+                                print("⚠️ [Stereo-Gesture] Depth gate rejected hand: closerThanGun=\(isCloserThanGun) withinReach=\(isWithinReachDistance)")
+                            }
                         }
                     } else {
                         // print("⚠️ [Stereo-Gesture] Could not get depth data: depthBuf=\(frame.smoothedSceneDepth?.depthMap != nil || frame.sceneDepth?.depthMap != nil)")
                     }
                 }
             }
+
+            if !didCheckAnyProjectedHand {
+                overlapReachStreak = 0
+                if currentFrameNumber % 120 == 0 {
+                    print("⚠️ [Stereo-Gesture] Hands were detected, but no confident keypoints projected into the stereo gesture view")
+                }
+            } else if !didHitGunRect {
+                overlapReachStreak = 0
+                if currentFrameNumber % 120 == 0 {
+                    print("⚠️ [Stereo-Gesture] Hand keypoints projected successfully, but none overlapped the gun rect")
+                }
+            } else if wasNear {
+                overlapReachStreak += 1
+                if currentFrameNumber % 120 == 0 {
+                    if depthRejectedCount > 0 {
+                        print("⚠️ [Stereo-Gesture] Hand overlapped gun but depth was noisy — overlap streak \(overlapReachStreak)")
+                        print("⚠️ [Stereo-Gesture] Hand overlapped the gun rect, but depth gating rejected \(depthRejectedCount) candidate(s)")
+                    } else {
+                        print("⚠️ [Stereo-Gesture] Hand overlapped the gun rect while near the prop — overlap streak \(overlapReachStreak)")
+                    }
+                }
+                if overlapReachStreak >= 3 {
+                    let reason = depthRejectedCount > 0
+                        ? "sustained overlap fallback with noisy depth"
+                        : "sustained overlap fallback"
+                    triggerReachGesture(reason: reason)
+                    return
+                }
+            } else {
+                overlapReachStreak = 0
+            }
         }
+    }
+
+    private func triggerReachGesture(reason: String) {
+        guard currentFrameNumber != lastReachGestureFrame else {
+            print("⏭️ [Stereo-Gesture] Already posted in frame \(currentFrameNumber)")
+            return
+        }
+        lastReachGestureFrame = currentFrameNumber
+        overlapReachStreak = 0
+
+        print("🚨 [Stereo-Gesture] REACH GESTURE DETECTED (\(reason))! Hiding gun...")
+        warningShown = true
+        hideGun()
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        NotificationCenter.default.post(name: arEventNotification, object: nil,
+            userInfo: [BusKey.arevent: AREvent.reachGesture])
     }
 
     private func gunScreenRect() -> CGRect? {
@@ -1873,12 +2135,38 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         let u = Int(round(CGFloat(dmW) * normX))
         let v = Int(round(CGFloat(dmH) * normY))
 
-        let depth = sampleDepth(buffer: depthBuf, u: u, v: v)
+        let searchRadius = 3
+        var bestDepth: Float?
+        var bestU = u
+        var bestV = v
+
+        for dv in -searchRadius...searchRadius {
+            for du in -searchRadius...searchRadius {
+                let sampleU = u + du
+                let sampleV = v + dv
+                guard let candidate = sampleDepth(buffer: depthBuf, u: sampleU, v: sampleV) else { continue }
+                if let currentBestDepth = bestDepth {
+                    if candidate < currentBestDepth {
+                        bestDepth = candidate
+                        bestU = sampleU
+                        bestV = sampleV
+                    }
+                } else {
+                    bestDepth = candidate
+                    bestU = sampleU
+                    bestV = sampleV
+                }
+            }
+        }
 
         // ALWAYS log depth sampling to debug false positives
-        print("🔍 [Stereo-Depth] screenPt=\(screenPoint) -> norm=(\(String(format: "%.3f", normX)), \(String(format: "%.3f", normY))) -> depth px=(\(u), \(v))/(\(dmW), \(dmH)) -> depth=\(depth != nil ? String(format: "%.2f", depth!) : "nil")m")
+        if let bestDepth {
+            print("🔍 [Stereo-Depth] screenPt=\(screenPoint) -> norm=(\(String(format: "%.3f", normX)), \(String(format: "%.3f", normY))) -> base px=(\(u), \(v))/(\(dmW), \(dmH)) -> best px=(\(bestU), \(bestV)) radius=\(searchRadius) -> depth=\(String(format: "%.2f", bestDepth))m")
+        } else {
+            print("🔍 [Stereo-Depth] screenPt=\(screenPoint) -> norm=(\(String(format: "%.3f", normX)), \(String(format: "%.3f", normY))) -> base px=(\(u), \(v))/(\(dmW), \(dmH)) -> no valid depth in radius \(searchRadius)")
+        }
 
-        return depth
+        return bestDepth
     }
 
     private func sampleDepth(buffer: CVPixelBuffer, u: Int, v: Int) -> Float? {
@@ -2183,5 +2471,97 @@ extension StereoARViewController: MTKViewDelegate {
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+}
+
+private final class StereoSessionVideoRecorder {
+    let videoSize = CGSize(width: 1280, height: 720)
+
+    private let outputURL: URL
+    private let writer: AVAssetWriter
+    private let writerInput: AVAssetWriterInput
+    private let adaptor: AVAssetWriterInputPixelBufferAdaptor
+    private var hasStartedSession = false
+
+    init(sessionName: String) throws {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+        outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(sessionName)-\(timestamp)")
+            .appendingPathExtension("mp4")
+
+        try? FileManager.default.removeItem(at: outputURL)
+
+        writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+
+        let settings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(videoSize.width),
+            AVVideoHeightKey: Int(videoSize.height),
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: 6_000_000,
+                AVVideoExpectedSourceFrameRateKey: 12,
+                AVVideoMaxKeyFrameIntervalKey: 12
+            ]
+        ]
+
+        writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        writerInput.expectsMediaDataInRealTime = true
+
+        adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: writerInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+                kCVPixelBufferWidthKey as String: Int(videoSize.width),
+                kCVPixelBufferHeightKey as String: Int(videoSize.height)
+            ]
+        )
+
+        guard writer.canAdd(writerInput) else {
+            throw NSError(domain: "StereoSessionVideoRecorder", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "Could not attach video input to asset writer."
+            ])
+        }
+
+        writer.add(writerInput)
+        guard writer.startWriting() else {
+            throw writer.error ?? NSError(domain: "StereoSessionVideoRecorder", code: -2, userInfo: [
+                NSLocalizedDescriptionKey: "Could not start writing video."
+            ])
+        }
+    }
+
+    func append(image: UIImage, at time: CMTime, ciContext: CIContext) {
+        guard writerInput.isReadyForMoreMediaData,
+              let pool = adaptor.pixelBufferPool,
+              let cgImage = image.cgImage else { return }
+
+        var maybePixelBuffer: CVPixelBuffer?
+        let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &maybePixelBuffer)
+        guard status == kCVReturnSuccess, let pixelBuffer = maybePixelBuffer else { return }
+
+        let ciImage = CIImage(cgImage: cgImage)
+        ciContext.render(ciImage, to: pixelBuffer)
+
+        if !hasStartedSession {
+            writer.startSession(atSourceTime: time)
+            hasStartedSession = true
+        }
+
+        adaptor.append(pixelBuffer, withPresentationTime: time)
+    }
+
+    func finish(completion: @escaping (URL?) -> Void) {
+        writerInput.markAsFinished()
+        writer.finishWriting {
+            let success = self.writer.status == .completed
+            if !success, let error = self.writer.error {
+                print("⚠️ [Stereo] Failed to finish session recording: \(error.localizedDescription)")
+            }
+            DispatchQueue.main.async {
+                completion(success ? self.outputURL : nil)
+            }
+        }
     }
 }

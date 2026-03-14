@@ -15,7 +15,6 @@ final class Orchestrator: ObservableObject {
 
     // Tunables
     private let nearDistance: Float = 1.0
-    private let backAwayDelta: Float = 0.7
 
     // Ephemeral state
     private var lastNearTime: Date?
@@ -39,15 +38,13 @@ final class Orchestrator: ObservableObject {
             forName: .arTrainingEvent, object: nil, queue: .main
         ) { [weak self] note in
             guard let self else { return }
-            // print("📬 [ORCH \(self.instanceID)] Received .arTrainingEvent notification")
+            print("📬 [ORCH \(self.instanceID)] Received .arTrainingEvent notification")
             guard let e = note.userInfo?[BusKey.arevent] as? AREvent else {
-                // print("❌ [ORCH \(self.instanceID)] No AR event in notification!")
+                print("❌ [ORCH \(self.instanceID)] No AR event in notification!")
                 return
             }
-            // print("📦 [ORCH \(self.instanceID)] Extracted event: \(e)")
-            Task { @MainActor in
-                self.handleAREvent(e)
-            }
+            print("📦 [ORCH \(self.instanceID)] Extracted event: \(e)")
+            self.handleAREvent(e)
         }
 
         vcIntentObserver = NotificationCenter.default.addObserver(
@@ -55,18 +52,14 @@ final class Orchestrator: ObservableObject {
         ) { [weak self] note in
             guard let self,
                   let i = note.userInfo?[BusKey.vcintent] as? VCIntent else { return }
-            Task { @MainActor in
-                self.handleVCIntent(i)
-            }
+            self.handleVCIntent(i)
         }
 
         verbalPhaseObserver = NotificationCenter.default.addObserver(
             forName: .verbalPhaseComplete, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor in
-                self.handleVerbalPhaseComplete()
-            }
+            self.handleVerbalPhaseComplete()
         }
     }
 
@@ -86,12 +79,16 @@ final class Orchestrator: ObservableObject {
     }
 
     func stopSession() {
+        tellAdultWorkItem?.cancel()
+        tellAdultWorkItem = nil
         phase = .wrapup
     }
 
     /// Explicitly clean up resources - call this when the view disappears
     func cleanup() {
         // print("🧹 [ORCH \(instanceID)] cleanup() called - removing observers")
+        tellAdultWorkItem?.cancel()
+        tellAdultWorkItem = nil
         if let observer = arEventObserver {
             NotificationCenter.default.removeObserver(observer)
             arEventObserver = nil
@@ -144,16 +141,6 @@ final class Orchestrator: ObservableObject {
             lastNearTime = Date()
             phase = .encounterPending
             // print("   Phase changed to: \(phase)")
-
-        case (.encounterPending, .childBacksAway(let delta)) where delta > backAwayDelta:
-            print("🏃 [Orchestrator] childBacksAway matched in encounterPending — triggering toTellAdultSoon()")
-            phase = .praisePath
-            toTellAdultSoon()
-
-        case (.exploration, .childBacksAway(let delta)) where delta > backAwayDelta:
-            print("🏃 [Orchestrator] childBacksAway matched in exploration — triggering toTellAdultSoon()")
-            phase = .praisePath
-            toTellAdultSoon()
 
         case (.encounterPending, .childRunsAway(_, _)):
             print("🏃 [Orchestrator] childRunsAway matched in encounterPending — triggering toTellAdultSoon()")

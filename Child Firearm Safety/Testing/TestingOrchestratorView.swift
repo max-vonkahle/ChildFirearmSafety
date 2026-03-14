@@ -24,6 +24,7 @@ struct TestingOrchestratorView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var coach = VoiceCoach(promptKey: "testingPrompt")
     @AppStorage("cardboardMode") private var cardboardMode = false
+    @AppStorage("sessionRecordingEnabled") private var sessionRecordingEnabled = false
 
     @State private var showHeadsetInstruction = false
     @State private var showLoadingScreen = false
@@ -50,12 +51,25 @@ struct TestingOrchestratorView: View {
 
     @State private var startCameraTransform: simd_float4x4?
     @State private var alignmentStatus: StartPositionAlignmentStatus?
+    @State private var loadingMappingStatus = "Waiting for relocalization"
     @State private var isAlignmentTrackingEnabled = false
     @State private var startPoseMissingFallback = false
     @State private var hasReachedStartMarker = false
     @State private var hasReachedResetMarker = false
+    @State private var isSessionRecordingActive = false
 
     private var currentStage: TestingStage { stageSequence[min(currentStageIndex, max(stageSequence.count - 1, 0))] }
+    private var loadingDebugLines: [String] {
+        // Hidden for now, but kept here so the start-alignment panel can be restored easily later.
+//        guard showLoadingScreen else { return [] }
+//        guard let alignmentStatus else { return ["Waiting for saved start position data"] }
+//        return [
+//            String(format: "Distance from saved start: %.2fm", alignmentStatus.horizontalDistanceMeters),
+//            String(format: "Facing error: %.0f°", alignmentStatus.yawDeltaDegrees),
+//            alignmentStatus.guidanceText
+//        ]
+        return []
+    }
 
     var body: some View {
         Group {
@@ -86,8 +100,10 @@ struct TestingOrchestratorView: View {
                 TestingStereoARContainer(
                     roomId: selectedRoomId,
                     activeStage: currentStage,
+                    shouldRecordSession: isSessionRecordingActive,
                     alignmentTrackingEnabled: isAlignmentTrackingEnabled,
                     onAlignmentStatus: { status in alignmentStatus = status },
+                    onWorldMappingStatus: { status in loadingMappingStatus = status },
                     onLoadedStartTransform: { transform in
                         startCameraTransform = transform
                         startPoseMissingFallback = (transform == nil)
@@ -104,13 +120,17 @@ struct TestingOrchestratorView: View {
                 .ignoresSafeArea()
                 .scaleEffect(0.98)
                 .opacity(showCamera ? 1 : 0)
-                .onDisappear { coach.stopSession() }
+                .onDisappear {
+                    isSessionRecordingActive = false
+                    exitTestingSession()
+                }
             } else {
                 TestingARView(
                     roomId: selectedRoomId,
                     activeStage: currentStage,
                     alignmentTrackingEnabled: isAlignmentTrackingEnabled,
                     onAlignmentStatus: { status in alignmentStatus = status },
+                    onWorldMappingStatus: { status in loadingMappingStatus = status },
                     onLoadedStartTransform: { transform in
                         startCameraTransform = transform
                         startPoseMissingFallback = (transform == nil)
@@ -124,12 +144,15 @@ struct TestingOrchestratorView: View {
                         }
                     },
                     onExit: {
-                        coach.stopSession()
+                        exitTestingSession()
                         dismiss()
                     }
                 )
                 .opacity(showCamera ? 1 : 0)
-                .onDisappear { coach.stopSession() }
+                .onDisappear {
+                    isSessionRecordingActive = false
+                    exitTestingSession()
+                }
             }
 
             if !showCamera {
@@ -146,7 +169,12 @@ struct TestingOrchestratorView: View {
             }
 
             if showLoadingScreen {
-                LoadingScreenView(message: "Loading your testing environment...")
+                LoadingScreenView(
+                    message: "Loading your testing environment...",
+                    onExit: {
+                        exitTestingSession()
+                    }
+                )
             }
 
             if showStartPrompt {
@@ -155,8 +183,12 @@ struct TestingOrchestratorView: View {
                         showStartPrompt = false
                         showCamera = true
                     }
+                    isSessionRecordingActive = sessionRecordingEnabled && cardboardMode
                     coach.startSession()
                     phase = .inStage
+                    if sessionRecordingEnabled && !cardboardMode {
+                        SessionScreenRecorder.shared.startIfNeeded()
+                    }
                     sendStagePromptIfNeeded(force: true)
                 }
             }
@@ -168,14 +200,6 @@ struct TestingOrchestratorView: View {
                 }
             }
 
-            if showCamera && phase == .returnToStart {
-                returnToStartOverlay
-            }
-
-            if showCamera && phase == .stageResetLoop {
-                testingResetOverlay
-            }
-
             if showCamera && phase == .completed {
                 testingCompleteOverlay
             }
@@ -183,13 +207,13 @@ struct TestingOrchestratorView: View {
         .overlay(alignment: .topTrailing) {
             if showCamera {
                 Button {
-                    coach.stopSession()
-                    selectedRoomId = nil
+                    exitTestingSession()
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 28, weight: .bold))
-                        .padding(16)
-                        .background(.ultraThinMaterial, in: Circle())
+                    Image(systemName: "xmark")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.12), in: Circle())
                 }
                 .accessibilityLabel("Exit to Room Picker")
                 .padding(.top, 44)
@@ -203,7 +227,10 @@ struct TestingOrchestratorView: View {
             showHeadsetInstruction = cardboardMode
             showLoadingScreen = !cardboardMode
         }
-        .onDisappear { removeObservers() }
+        .onDisappear {
+            exitTestingSession()
+            removeObservers()
+        }
         .onChange(of: coach.state) { _, newState in
             if newState == .thinking {
                 modelEngagedSinceRunaway = true
@@ -227,8 +254,25 @@ struct TestingOrchestratorView: View {
     }
 
     private var returnToStartOverlay: some View {
+        Group {
+            if cardboardMode {
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        returnToStartCard
+                            .frame(width: geometry.size.width / 2)
+                        returnToStartCard
+                            .frame(width: geometry.size.width / 2)
+                    }
+                }
+            } else {
+                returnToStartCard
+            }
+        }
+    }
+
+    private var returnToStartCard: some View {
         VStack(spacing: 14) {
-            Text("Walk to the Red X")
+            Text("Walk to the Red Circle")
                 .font(.title2.bold())
 
             Text(returnToStartMessage)
@@ -267,16 +311,34 @@ struct TestingOrchestratorView: View {
         .frame(maxWidth: 420)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
         .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var testingResetOverlay: some View {
+        Group {
+            if cardboardMode {
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        testingResetCard
+                            .frame(width: geometry.size.width / 2)
+                        testingResetCard
+                            .frame(width: geometry.size.width / 2)
+                    }
+                }
+            } else {
+                testingResetCard
+            }
+        }
+    }
+
+    private var testingResetCard: some View {
         VStack(spacing: 12) {
             Text("Reset to Try Again")
                 .font(.title3.bold())
 
             Text(hasReachedResetMarker
-                 ? "You are on the red X. Tap anywhere on the screen to reset and try the room again."
-                 : "Repeat the four safety steps, then walk to the red X on the floor.")
+                 ? "You are on the red circle. Tap anywhere on the screen to reset and try the room again."
+                 : "Repeat the four safety steps, then walk to the red circle on the floor.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
         }
@@ -284,40 +346,74 @@ struct TestingOrchestratorView: View {
         .frame(maxWidth: 420)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
         .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var returnToStartMessage: String {
         if startPoseMissingFallback {
             return hasReachedStartMarker
-                ? "You are back at the saved start spot. Tap to move on."
-                : "Walk back to your starting spot, then tap the button below to continue."
+                ? "You are back at the saved start spot. Tap anywhere on the screen to move on."
+                : "Walk back to your starting spot. Once you are there, tap anywhere on the screen to continue."
         }
         if !hasReachedStartMarker {
-            return "Walk to the red X on the floor."
+            return "Walk to the red circle on the floor. Once you are standing on it and facing the next room, tap anywhere on the screen to move on."
         }
         return canAdvanceFromStartOverlay
-            ? "Great. You are back at the start and facing the room correctly. Tap to move on."
-            : (alignmentStatus?.guidanceText ?? "Turn to face the room before moving on.")
+            ? "Great. You are back at the start and facing the room correctly. Tap anywhere on the screen to move on."
+            : ((alignmentStatus?.guidanceText ?? "Turn to face the room before moving on.") + " Then tap anywhere on the screen to continue.")
     }
 
     private var testingCompleteOverlay: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(.green)
-            Text("Testing Complete")
-                .font(.largeTitle.bold())
-            Text("All three safety testing scenarios are finished.")
-                .foregroundStyle(.secondary)
-            Button("Back to Room Picker") {
-                coach.stopSession()
-                selectedRoomId = nil
+        ZStack {
+            Color.black.opacity(0.85)
+                .edgesIgnoringSafeArea(.all)
+
+            if cardboardMode {
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        testingCompleteContent
+                            .frame(width: geometry.size.width / 2, height: geometry.size.height)
+                        testingCompleteContent
+                            .frame(width: geometry.size.width / 2, height: geometry.size.height)
+                    }
+                }
+            } else {
+                testingCompleteContent
             }
-            .buttonStyle(.borderedProminent)
         }
-        .padding()
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .padding(.horizontal, 30)
+        .onTapGesture {
+            exitTestingSession()
+        }
+    }
+
+    private var testingCompleteContent: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 50))
+                .foregroundColor(.green)
+
+            Text("Great Job!")
+                .font(.title)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+
+            Text("Testing Complete")
+                .font(.title3)
+                .foregroundColor(.white.opacity(0.9))
+
+            VStack(spacing: 6) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(.white.opacity(0.8))
+
+                Text("Please take off the headset\nand give it to your instructor")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.top, 12)
+        }
+        .padding(24)
     }
 
     private var canAdvanceFromStartOverlay: Bool {
@@ -325,6 +421,7 @@ struct TestingOrchestratorView: View {
     }
 
     private func resetTestingSessionState() {
+        stopRecordingIfNeeded()
         runawayPraiseTask?.cancel()
         runawayPraiseTask = nil
         modelEngagedSinceRunaway = false
@@ -341,10 +438,19 @@ struct TestingOrchestratorView: View {
         isWaitingForStageAdvance = false
         startCameraTransform = nil
         alignmentStatus = nil
+        loadingMappingStatus = "Waiting for relocalization"
         isAlignmentTrackingEnabled = false
         startPoseMissingFallback = false
         hasReachedStartMarker = false
         hasReachedResetMarker = false
+    }
+
+    private func exitTestingSession() {
+        runawayPraiseTask?.cancel()
+        runawayPraiseTask = nil
+        coach.stopSession()
+        resetTestingSessionState()
+        selectedRoomId = nil
     }
 
     private func installObservers() {
@@ -358,8 +464,6 @@ struct TestingOrchestratorView: View {
                 switch event {
                 case .reachGesture:
                     handleReachGesture()
-                case .childBacksAway:
-                    handleRunAway()
                 case .childRunsAway:
                     handleRunAway()
                 case .childAtStartMarker:
@@ -416,8 +520,9 @@ struct TestingOrchestratorView: View {
         isWaitingForStageAdvance = true
 
         let stage = currentStage
+        let isLastStage = currentStageIndex >= stageSequence.count - 1
         let runtimeText = """
-        Current room: \(stage.displayName).
+        Current room: \(stage.displayName) (room \(currentStageIndex + 1) of \(stageSequence.count)\(isLastStage ? " — this is the LAST room" : "")).
         Scenario setup: \(stage.scenarioSetupText)
         Room intro to speak now: \(stage.startPromptText)
 
@@ -439,7 +544,9 @@ struct TestingOrchestratorView: View {
 
         if currentStageIndex >= stageSequence.count - 1 {
             phase = .completed
-            coach.stopSession()
+            stopRecordingIfNeeded()
+            // Don't stopSession() here — let the LLM finish speaking its praise before going idle.
+            // onPlaybackComplete sees testingStageCompletionSignaled=true and cleans up automatically.
             NotificationCenter.default.post(name: .testingSessionComplete, object: nil)
             return
         }
@@ -448,10 +555,10 @@ struct TestingOrchestratorView: View {
         hasReachedStartMarker = false
         hasReachedResetMarker = false
 
-        // Show the red X floor marker and tell the child to walk to it
+        // Show the red circle floor marker and tell the child to walk to it
         NotificationCenter.default.post(name: .arCommand, object: nil, userInfo: [BusKey.arg: "showStartMarker"])
         let nextStageName = stageSequence[currentStageIndex + 1].displayName
-        coach.injectContext("Great job! Now walk to the red X on the floor, face the next room, and tap to move on. The \(nextStageName) will start after that.")
+        coach.injectContext("Great job! Now walk to the red circle on the floor, face the next room, and tap anywhere on the screen to move on. The \(nextStageName) will start after that.")
     }
 
     private func handleChildAtStartMarker() {
@@ -468,13 +575,20 @@ struct TestingOrchestratorView: View {
     }
 
     private func handleUserTappedToReset() {
-        guard phase == .stageResetLoop else { return }
-        print("👆 [Testing] Reset tap received — restoring gun and prompting child to act it out again")
-        hasReachedResetMarker = false
-        didDetectRunAwayInCurrentStage = false
-        phase = .inStage
-        NotificationCenter.default.post(name: .arCommand, object: nil, userInfo: [BusKey.arg: "setGunVisibility:true"])
-        coach.sendTestingPostResetActOut(stageName: currentStage.displayName)
+        switch phase {
+        case .stageResetLoop:
+            print("👆 [Testing] Reset tap received — restoring gun and prompting child to act it out again")
+            hasReachedResetMarker = false
+            didDetectRunAwayInCurrentStage = false
+            phase = .inStage
+            NotificationCenter.default.post(name: .arCommand, object: nil, userInfo: [BusKey.arg: "setGunVisibility:true"])
+            coach.sendTestingPostResetActOut(stageName: currentStage.displayName)
+        case .returnToStart:
+            print("👆 [Testing] Start-marker tap received — advancing to next stage")
+            attemptAdvanceFromStartOverlay()
+        default:
+            return
+        }
     }
 
     private func advanceToNextStage() {
@@ -488,11 +602,16 @@ struct TestingOrchestratorView: View {
         alignmentStatus = nil
         didDetectRunAwayInCurrentStage = false
         phase = .inStage
+        print("✅ [Testing] Advanced to stage \(currentStageIndex): \(currentStage.displayName)")
         NotificationCenter.default.post(name: .arCommand, object: nil, userInfo: [BusKey.arg: "setGunVisibility:true"])
+        sendStagePromptIfNeeded(force: true)
     }
 
     private func attemptAdvanceFromStartOverlay() {
-        guard phase == .returnToStart, canAdvanceFromStartOverlay else { return }
+        guard phase == .returnToStart else {
+            print("⚠️ [Testing] attemptAdvance blocked — phase is \(phase), not returnToStart")
+            return
+        }
         advanceToNextStage()
     }
 
@@ -504,15 +623,15 @@ struct TestingOrchestratorView: View {
         didDetectRunAwayInCurrentStage = true
 
         runawayPraiseTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(15))
+            try? await Task.sleep(for: .seconds(8))
             guard !Task.isCancelled, phase == .inStage, !modelEngagedSinceRunaway else { return }
-            print("🗣️ [Testing] Run-away follow-up fired after 15s silence in \(currentStage.displayName)")
+            print("🗣️ [Testing] Run-away follow-up fired after 8s silence in \(currentStage.displayName)")
             let context = """
-            The child has moved away from the gun in the \(currentStage.displayName.lowercased()) and has been silent for 15 seconds. \
+            The child has moved away from the gun in the \(currentStage.displayName.lowercased()) and has been silent for 8 seconds. \
             Praise them enthusiastically for moving away. Then gently ask if they know what the last important step is — \
             telling a trusted adult about what they found. Keep the tone warm and encouraging.
             """
-            coach.injectContext(context)
+            coach.sendRunAwayFollowUp(context)
         }
     }
 
@@ -552,9 +671,17 @@ struct TestingOrchestratorView: View {
 
         if resetAttempts >= maxResetAttempts {
             DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
+                stopRecordingIfNeeded()
                 coach.stopSession()
                 selectedRoomId = nil
             }
+        }
+    }
+
+    private func stopRecordingIfNeeded() {
+        isSessionRecordingActive = false
+        if sessionRecordingEnabled && !cardboardMode {
+            SessionScreenRecorder.shared.stopIfNeeded()
         }
     }
 
@@ -569,7 +696,7 @@ struct TestingOrchestratorView: View {
             runawayPraiseTask?.cancel()
             runawayPraiseTask = nil
             didDetectRunAwayInCurrentStage = false
-            coach.sendTestingCalledAdultAfterRunAway(stageName: currentStage.displayName, text: text)
+            coach.sendTestingCalledAdultAfterRunAway(stageName: currentStage.displayName, text: text, isLastStage: currentStageIndex >= stageSequence.count - 1)
 
         default:
             break
@@ -582,6 +709,7 @@ struct TestingARView: UIViewControllerRepresentable {
     let activeStage: TestingStage
     let alignmentTrackingEnabled: Bool
     let onAlignmentStatus: (StartPositionAlignmentStatus?) -> Void
+    let onWorldMappingStatus: (String) -> Void
     let onLoadedStartTransform: (simd_float4x4?) -> Void
     let onSceneReady: () -> Void
     let onExit: () -> Void
@@ -593,6 +721,7 @@ struct TestingARView: UIViewControllerRepresentable {
         vc.activeTestingStage = activeStage
         vc.alignmentTrackingEnabled = alignmentTrackingEnabled
         vc.onAlignmentStatus = onAlignmentStatus
+        vc.onWorldMappingStatus = onWorldMappingStatus
         vc.onLoadedStartTransform = onLoadedStartTransform
         vc.onSceneReady = onSceneReady
         vc.onExit = onExit
@@ -603,6 +732,7 @@ struct TestingARView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: TestingARViewController, context: Context) {
         uiViewController.cardboardMode = cardboardMode
         uiViewController.onAlignmentStatus = onAlignmentStatus
+        uiViewController.onWorldMappingStatus = onWorldMappingStatus
         uiViewController.onLoadedStartTransform = onLoadedStartTransform
         uiViewController.alignmentTrackingEnabled = alignmentTrackingEnabled
         uiViewController.updateTestingStage(activeStage)
@@ -612,8 +742,10 @@ struct TestingARView: UIViewControllerRepresentable {
 struct TestingStereoARContainer: UIViewControllerRepresentable {
     let roomId: String?
     let activeStage: TestingStage
+    let shouldRecordSession: Bool
     let alignmentTrackingEnabled: Bool
     let onAlignmentStatus: (StartPositionAlignmentStatus?) -> Void
+    let onWorldMappingStatus: (String) -> Void
     let onLoadedStartTransform: (simd_float4x4?) -> Void
     let onSceneReady: () -> Void
 
@@ -623,15 +755,19 @@ struct TestingStereoARContainer: UIViewControllerRepresentable {
         vc.testingActiveStage = activeStage
         vc.testingAlignmentTrackingEnabled = alignmentTrackingEnabled
         vc.onTestingAlignmentStatus = onAlignmentStatus
+        vc.onTestingWorldMappingStatus = onWorldMappingStatus
         vc.onTestingStartTransformLoaded = onLoadedStartTransform
         vc.onTestingSceneReady = onSceneReady
+        vc.shouldRecordSession = shouldRecordSession
         return vc
     }
 
     func updateUIViewController(_ vc: StereoARViewController, context: Context) {
         vc.onTestingAlignmentStatus = onAlignmentStatus
+        vc.onTestingWorldMappingStatus = onWorldMappingStatus
         vc.onTestingStartTransformLoaded = onLoadedStartTransform
         vc.testingAlignmentTrackingEnabled = alignmentTrackingEnabled
+        vc.shouldRecordSession = shouldRecordSession
         vc.updateTestingStage(activeStage)
     }
 }
@@ -642,6 +778,7 @@ final class TestingARViewController: UIViewController {
     var onExit: (() -> Void)?
     var cardboardMode: Bool = false
     var onAlignmentStatus: ((StartPositionAlignmentStatus?) -> Void)?
+    var onWorldMappingStatus: ((String) -> Void)?
     var onLoadedStartTransform: ((simd_float4x4?) -> Void)?
     var activeTestingStage: TestingStage = .kitchen
     var alignmentTrackingEnabled: Bool = false
@@ -658,6 +795,7 @@ final class TestingARViewController: UIViewController {
     private var isWaitingForStartMarker: Bool = false
     private var isWaitingForResetSpeech: Bool = false
     private var isResetPending: Bool = false
+    private var isStageAdvancePending: Bool = false
     private let markerReachDistance: Float = 0.5
     private var tapGesture: UITapGestureRecognizer?
     private let handRequest = VNDetectHumanHandPoseRequest()
@@ -670,19 +808,23 @@ final class TestingARViewController: UIViewController {
     private let decisionInterval: CFTimeInterval = 0.15
     private var currentFrameNumber: Int = 0
     private var lastReachGestureFrame: Int = 0
+    private var lastReportedWorldMappingStatus: String?
+    private var lastReportedAlignmentStatus: StartPositionAlignmentStatus?
     private var wasNear: Bool = false
     private var lastNearDistance: Float = 0
     private var isRetreating: Bool = false
     private var retreatStartDistance: Float = 0
     private var retreatStartTime: CFTimeInterval = 0
+    private var isAwaitingSettlement: Bool = false
+    private var settlePeakDistance: Float = 0
+    private var lastSignificantMoveTime: CFTimeInterval = 0
     private let retreatStartThreshold: Float = 0.15
-    private let runAwayThreshold: Float = 1.5
-    private let runAwayMaxTime: CFTimeInterval = 2.0
-    private let backAwayThreshold: Float = 0.7
-    private let backAwayMaxTime: CFTimeInterval = 3.0
+    private let runAwayThreshold: Float = 5.0
+    private let settleThreshold: Float = 0.15
+    private let settleTime: CFTimeInterval = 1.5
     private let pixelPadding: CGFloat = 24
     private let depthMargin: Float = 0.07
-    private let maxReachDistance: Float = 0.5
+    private let maxReachDistance: Float = 0.25
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -705,9 +847,11 @@ final class TestingARViewController: UIViewController {
             } else if cmd == "showStartMarker" {
                 self.setStartMarkerVisible(true)
                 self.isWaitingForStartMarker = true
+                self.isStageAdvancePending = !self.isResetPending
             } else if cmd == "hideStartMarker" {
                 self.setStartMarkerVisible(false)
                 self.isWaitingForStartMarker = false
+                self.isStageAdvancePending = false
             }
         }
     }
@@ -804,13 +948,15 @@ final class TestingARViewController: UIViewController {
         placedGunAnchor?.isEnabled = visible
         if visible {
             wasNear = false
+            lastNearDistance = 0
             isRetreating = false
+            isAwaitingSettlement = false
             lastReachGestureFrame = 0
         }
     }
 
     @objc private func handleTap(_ sender: UITapGestureRecognizer) {
-        guard isResetPending else { return }
+        guard isResetPending || isStageAdvancePending else { return }
 
         if isWaitingForResetSpeech {
             print("⏭️ [TestingAR] Tap ignored - waiting for model to finish speaking")
@@ -827,8 +973,9 @@ final class TestingARViewController: UIViewController {
             return
         }
 
-        print("✅ [TestingAR] User tapped to confirm reset - posting userTappedToReset event")
+        print("✅ [TestingAR] User tapped on start marker flow - posting userTappedToReset event")
         setStartMarkerVisible(false)
+        isStageAdvancePending = false
         NotificationCenter.default.post(
             name: .arTestingEvent,
             object: nil,
@@ -988,13 +1135,25 @@ extension TestingARViewController: ARSessionDelegate {
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         currentFrameNumber += 1
 
-        if alignmentTrackingEnabled, let startCameraTransform {
+        let mappingStatus = frame.worldMappingStatus.debugDescription
+        if mappingStatus != lastReportedWorldMappingStatus {
+            lastReportedWorldMappingStatus = mappingStatus
+            DispatchQueue.main.async { [weak self] in
+                self?.onWorldMappingStatus?(mappingStatus)
+            }
+        }
+
+        if let startCameraTransform {
             let status = RoomLibrary.startAlignmentStatus(
                 currentCameraTransform: frame.camera.transform,
                 targetStartTransform: startCameraTransform
             )
-            DispatchQueue.main.async { [weak self] in self?.onAlignmentStatus?(status) }
-        } else {
+            if status != lastReportedAlignmentStatus {
+                lastReportedAlignmentStatus = status
+                DispatchQueue.main.async { [weak self] in self?.onAlignmentStatus?(status) }
+            }
+        } else if lastReportedAlignmentStatus != nil {
+            lastReportedAlignmentStatus = nil
             DispatchQueue.main.async { [weak self] in self?.onAlignmentStatus?(nil) }
         }
 
@@ -1056,11 +1215,9 @@ extension TestingARViewController: ARSessionDelegate {
             lastDecisionAt = now
 
             if let d = gunDistanceFromCamera(frame: frame) {
-                if d < 1.0, !wasNear {
+                if d < 1.0, wasNear == false {
                     wasNear = true
                     lastNearDistance = d
-                    isRetreating = false
-                    print("📍 [TestingAR-Retreat] Entered near zone at d=\(String(format: "%.2f", d))m")
                 }
 
                 if wasNear {
@@ -1069,38 +1226,43 @@ extension TestingARViewController: ARSessionDelegate {
                         isRetreating = true
                         retreatStartDistance = d
                         retreatStartTime = now
-                        print("📍 [TestingAR-Retreat] Retreat started at d=\(String(format: "%.2f", d))m")
+                        print("📍 [TestingAR-Retreat] Retreat started at d=\(String(format: "%.2f", d))m, from closest=\(String(format: "%.2f", lastNearDistance))m")
                     }
 
                     if isRetreating {
                         let retreatElapsed = now - retreatStartTime
                         let retreatDistance = d - lastNearDistance
-                        if retreatDistance > runAwayThreshold, retreatElapsed < runAwayMaxTime {
-                            wasNear = false
-                            isRetreating = false
-                            print("🏃 [TestingAR-Retreat] childRunsAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
-                            NotificationCenter.default.post(
-                                name: .arTestingEvent,
-                                object: nil,
-                                userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)]
-                            )
-                        } else if retreatDistance > backAwayThreshold, retreatElapsed < backAwayMaxTime {
-                            wasNear = false
-                            isRetreating = false
-                            print("🚶 [TestingAR-Retreat] childBacksAway fired! delta=\(String(format: "%.2f", retreatDistance))m in \(String(format: "%.2f", retreatElapsed))s")
-                            NotificationCenter.default.post(
-                                name: .arTestingEvent,
-                                object: nil,
-                                userInfo: [BusKey.arevent: AREvent.childBacksAway(delta: retreatDistance)]
-                            )
+
+                        if retreatDistance > runAwayThreshold {
+                            if !isAwaitingSettlement {
+                                isAwaitingSettlement = true
+                                settlePeakDistance = d
+                                lastSignificantMoveTime = now
+                                print("📍 [TestingAR-Retreat] Run-away threshold crossed at d=\(String(format: "%.2f", d))m — waiting for child to stop")
+                            } else if d > settlePeakDistance + settleThreshold {
+                                settlePeakDistance = d
+                                lastSignificantMoveTime = now
+                            } else if now - lastSignificantMoveTime >= settleTime {
+                                wasNear = false
+                                isRetreating = false
+                                isAwaitingSettlement = false
+                                lastNearDistance = 0
+                                print("🏃 [TestingAR-Retreat] childRunsAway fired! delta=\(String(format: "%.2f", retreatDistance))m, settled at d=\(String(format: "%.2f", d))m")
+                                NotificationCenter.default.post(
+                                    name: .arTestingEvent,
+                                    object: nil,
+                                    userInfo: [BusKey.arevent: AREvent.childRunsAway(delta: retreatDistance, duration: retreatElapsed)]
+                                )
+                            }
                         }
                     }
 
                     let previousNearDistance = lastNearDistance
                     lastNearDistance = min(lastNearDistance, d)
-                    if lastNearDistance < previousNearDistance && isRetreating {
-                        print("📍 [TestingAR-Retreat] User returned closer (d=\(String(format: "%.2f", d))m) — resetting retreat timer")
+                    if lastNearDistance < previousNearDistance && (isRetreating || isAwaitingSettlement) {
+                        print("📍 [TestingAR-Retreat] User moved closer (d=\(String(format: "%.2f", d))m) — resetting retreat")
                         isRetreating = false
+                        isAwaitingSettlement = false
                     }
                 }
             }

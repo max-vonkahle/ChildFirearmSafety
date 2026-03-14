@@ -19,8 +19,7 @@ enum AREvent {
     case gunVisible(distance: Float)
     case gunProximityNear(distance: Float)
     case reachGesture
-    case childBacksAway(delta: Float)
-    case childRunsAway(delta: Float, duration: TimeInterval)  // Faster/further retreat than backing away
+    case childRunsAway(delta: Float, duration: TimeInterval)
     case mappingProgress(percent: Float)
     case userTappedToReset  // User tapped screen to confirm they're back at starting position
     case userTappedToBeginActOut  // User tapped screen at the start marker to begin Phase 2

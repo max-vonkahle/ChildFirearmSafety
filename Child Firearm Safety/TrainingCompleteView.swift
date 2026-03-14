@@ -41,36 +41,33 @@ struct TrainingCompleteView: View {
     }
 
     private var completionContent: some View {
-        VStack(spacing: 24) {
-            // Success icon
+        VStack(spacing: 16) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 80))
+                .font(.system(size: 50))
                 .foregroundColor(.green)
 
-            // Completion message
             Text("Great Job!")
-                .font(.largeTitle)
+                .font(.title)
                 .fontWeight(.bold)
                 .foregroundColor(.white)
 
             Text("Training Complete")
-                .font(.title2)
+                .font(.title3)
                 .foregroundColor(.white.opacity(0.9))
 
-            // Instruction to return headset
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 Image(systemName: "hand.raised.fill")
-                    .font(.system(size: 32))
+                    .font(.system(size: 24))
                     .foregroundColor(.white.opacity(0.8))
 
                 Text("Please take off the headset\nand give it to your instructor")
-                    .font(.headline)
+                    .font(.subheadline)
                     .foregroundColor(.white.opacity(0.9))
                     .multilineTextAlignment(.center)
             }
-            .padding(.top, 20)
+            .padding(.top, 12)
         }
-        .padding(40)
+        .padding(24)
     }
 }
 
