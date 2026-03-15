@@ -206,10 +206,11 @@ struct TestingSetupView: View {
             cleanupAutoHide()
             dismiss()
         } label: {
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 28, weight: .bold))
-                .padding(16)
-                .background(.ultraThinMaterial, in: Circle())
+            Image(systemName: "xmark")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 32, height: 32)
+                .background(Color.white.opacity(0.12), in: Circle())
         }
         .accessibilityLabel("Exit")
         .transition(.opacity.combined(with: .scale))
@@ -383,9 +384,16 @@ final class TestingWallSelectorViewController: UIViewController {
     }
 
     private func setupARView() {
-        arView = ARView(frame: view.bounds)
-        arView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.backgroundColor = .black
+        arView = ARView(frame: .zero)
+        arView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(arView)
+        NSLayoutConstraint.activate([
+            arView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            arView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            arView.topAnchor.constraint(equalTo: view.topAnchor),
+            arView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
 
         let config = ARWorldTrackingConfiguration()
         config.planeDetection      = [.horizontal, .vertical]

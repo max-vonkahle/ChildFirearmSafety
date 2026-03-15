@@ -247,7 +247,7 @@ final class Orchestrator: ObservableObject {
             self.tellAdultWorkItem = nil
         }
         tellAdultWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: work)
     }
 
     // MARK: - Bus senders

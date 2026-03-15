@@ -95,7 +95,7 @@ struct OrchestratorView: View {
                                 didAutoLoad = false
                                 didAutoStart = false
                             },
-                            debugInfo: LoadingDebugInfo(mappingStatus: loadingMappingStatus)
+                            debugInfo: nil
                         )
                     }
 

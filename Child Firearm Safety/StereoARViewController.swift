@@ -329,12 +329,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         maskView.isUserInteractionEnabled = false
         view.addSubview(maskView)
 
-        reticleView = UIView()
-        reticleView.isUserInteractionEnabled = false
-        view.addSubview(reticleView)
-
-        // Initial reticle drawing
-        createReticle()
+        // Reticle disabled.
 
 
         // --- Tap gesture for reset ---
@@ -380,11 +375,6 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
         // Cardboard mask covers whole screen
         maskView.frame = view.bounds
         createCardboardMask()
-
-        // Reticle overlay also covers whole screen
-        reticleView.frame = view.bounds
-        createReticle()
-
 
         // Update off-axis projection with new aspect ratio
         updateOffAxisProjection()
@@ -1641,7 +1631,7 @@ final class StereoARViewController: UIViewController, ARSessionDelegate {
                 let tNow = t
 
                 // Enter near zone
-                if d < 1.0, wasNear == false {
+                if d < 1.5, wasNear == false {
                     wasNear = true
                     lastNearDistance = d
                     lastNearTime = tNow

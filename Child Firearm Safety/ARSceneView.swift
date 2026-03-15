@@ -73,10 +73,11 @@ struct ARSceneView<Overlay: View>: View {
                         cleanupExitAutoHide()
                         onExit()
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 28, weight: .bold))
-                            .padding(16)
-                            .background(.ultraThinMaterial, in: Circle())
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Color.white.opacity(0.12), in: Circle())
                     }
                     .accessibilityLabel("Exit to Home")
                     .transition(.opacity.combined(with: .scale))

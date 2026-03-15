@@ -346,6 +346,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             guard let gunRect = gunScreenRect() else { return }
 
             // Check hands against gun rect + depth
+            var handCheckCount = 0
             for hand in observations {
                 let pts = (try? hand.recognizedPoints(.all)) ?? [:]
                 // fingertips first, then wrist
@@ -353,14 +354,34 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                             .middleTip, .wrist] {
                     guard let rp = pts[key], rp.confidence > 0.35 else { continue }
                     let hp = visionNormToScreen(rp.location)
+                    handCheckCount += 1
+
+                    if currentFrameNumber % 30 == 0 && handCheckCount <= 2 {
+                        print("🖐️ [Debug] Vision raw: \(rp.location) → Screen: \(hp)")
+                        print("   Gun rect: \(gunRect)")
+                        print("   Contains: \(gunRect.contains(hp))")
+                    }
 
                     // 1) inside/near the gun's screen footprint?
-                    guard gunRect.contains(hp) else { continue }
+                    guard gunRect.contains(hp) else {
+                        if currentFrameNumber % 120 == 0 && handCheckCount == 1 {
+                            print("📍 [AR-Gesture] Hand at \(hp) outside gun rect \(gunRect)")
+                        }
+                        continue
+                    }
+
+                    print("✋ [AR-Gesture] Hand INSIDE gun rect! Point: \(hp)")
+                    print("⚠️ [Debug] HAND INSIDE GUN RECT!")
+                    print("   Vision coords: \(rp.location)")
+                    print("   Screen coords: \(hp)")
+                    print("   Gun rect: \(gunRect)")
 
                     // 2) hand closer than gun AND within reach distance?
                     if let depthBuf = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap,
                        let handZ = sampleDepthAtScreen(depthBuf, screenPoint: hp),
                        let gunZ = gunDistanceFromCamera(frame: frame) {
+
+                        print("📏 [AR-Gesture] Depth check: handZ=\(handZ), gunZ=\(gunZ), margin=\(depthMargin), maxReach=\(maxReachDistance)")
                         
                         // Hand must be:
                         // 1. Closer than gun (handZ + margin < gunZ)
@@ -369,7 +390,12 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                         let isCloserThanGun = handZ + depthMargin < gunZ
                         let isWithinReachDistance = gunZ - handZ < maxReachDistance
                         
-                        guard isCloserThanGun && isWithinReachDistance else { continue }
+                        guard isCloserThanGun && isWithinReachDistance else {
+                            if currentFrameNumber % 60 == 0 {
+                                print("⚠️ [AR-Gesture] Depth gate rejected hand: closerThanGun=\(isCloserThanGun) withinReach=\(isWithinReachDistance)")
+                            }
+                            continue
+                        }
 
                         // Extra safety: prevent duplicate events in same frame (multiple hands)
                         guard currentFrameNumber != lastReachGestureFrame else {

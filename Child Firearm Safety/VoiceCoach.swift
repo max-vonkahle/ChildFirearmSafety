@@ -919,7 +919,7 @@ final class VoiceCoach: ObservableObject {
                         }
                     }
                 }
-                if self.isTestingMode, let pending = self.pendingTestingResetFollowupInstruction {
+                if let pending = self.pendingTestingResetFollowupInstruction {
                     Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(600))
                         await self.live.sendText(pending)

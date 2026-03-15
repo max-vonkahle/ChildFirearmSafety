@@ -178,7 +178,7 @@ struct SetupView: View {
                     hasPlacedMarker = false
                 },
                 isArmed: isArmed,
-                canSave: hasPlacedAssets && isMappingReady,
+                canSave: hasPlacedAssets && isMappingReady && hasPlacedMarker,
                 mappingReady: isMappingReady,
                 mappingStatusLabel: mappingStatusLabel,
                 showMarkerButton: hasPlacedAssets,

@@ -808,6 +808,7 @@ final class TestingARViewController: UIViewController {
     private let decisionInterval: CFTimeInterval = 0.15
     private var currentFrameNumber: Int = 0
     private var lastReachGestureFrame: Int = 0
+    private var overlapReachStreak: Int = 0
     private var lastReportedWorldMappingStatus: String?
     private var lastReportedAlignmentStatus: StartPositionAlignmentStatus?
     private var wasNear: Bool = false
@@ -894,6 +895,11 @@ final class TestingARViewController: UIViewController {
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
             config.frameSemantics.insert(.sceneDepth)
         }
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
+            config.frameSemantics.insert(.personSegmentationWithDepth)
+        } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentation) {
+            config.frameSemantics.insert(.personSegmentation)
+        }
 
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
     }
@@ -908,6 +914,11 @@ final class TestingARViewController: UIViewController {
         }
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
             config.frameSemantics.insert(.sceneDepth)
+        }
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
+            config.frameSemantics.insert(.personSegmentationWithDepth)
+        } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentation) {
+            config.frameSemantics.insert(.personSegmentation)
         }
         arView.session.run(config)
         if !assetTransforms.isEmpty {
@@ -952,6 +963,7 @@ final class TestingARViewController: UIViewController {
             isRetreating = false
             isAwaitingSettlement = false
             lastReachGestureFrame = 0
+            overlapReachStreak = 0
         }
     }
 
@@ -1035,12 +1047,30 @@ final class TestingARViewController: UIViewController {
     private func sampleDepthAtScreen(_ depthBuf: CVPixelBuffer, screenPoint: CGPoint) -> Float? {
         CVPixelBufferLockBaseAddress(depthBuf, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(depthBuf, .readOnly) }
-        let w = CVPixelBufferGetWidth(depthBuf), h = CVPixelBufferGetHeight(depthBuf)
-        let x = min(max(Int(screenPoint.x / arView.bounds.width * CGFloat(w)), 0), w - 1)
-        let y = min(max(Int(screenPoint.y / arView.bounds.height * CGFloat(h)), 0), h - 1)
-        let row = CVPixelBufferGetBaseAddress(depthBuf)! + y * CVPixelBufferGetBytesPerRow(depthBuf)
-        let z = row.assumingMemoryBound(to: Float32.self)[x]
-        return z.isFinite && z > 0 ? z : nil
+        let dmW = CVPixelBufferGetWidth(depthBuf)
+        let dmH = CVPixelBufferGetHeight(depthBuf)
+        let u = Int(round(screenPoint.x / arView.bounds.width * CGFloat(dmW)))
+        let v = Int(round(screenPoint.y / arView.bounds.height * CGFloat(dmH)))
+
+        let searchRadius = 3
+        let rowStride = CVPixelBufferGetBytesPerRow(depthBuf) / MemoryLayout<Float32>.size
+        let base = CVPixelBufferGetBaseAddress(depthBuf)!.assumingMemoryBound(to: Float32.self)
+        var bestDepth: Float?
+
+        for dv in -searchRadius...searchRadius {
+            for du in -searchRadius...searchRadius {
+                let sU = u + du, sV = v + dv
+                guard sU >= 0, sU < dmW, sV >= 0, sV < dmH else { continue }
+                let z = base[sV * rowStride + sU]
+                guard z.isFinite, z > 0 else { continue }
+                if let current = bestDepth {
+                    if z < current { bestDepth = z }
+                } else {
+                    bestDepth = z
+                }
+            }
+        }
+        return bestDepth
     }
 
     private func gunDistanceFromCamera(frame: ARFrame) -> Float? {
@@ -1051,6 +1081,22 @@ final class TestingARViewController: UIViewController {
         let rel = camInv * world
         let depth = -rel.z
         return depth.isFinite && depth > 0 ? depth : nil
+    }
+
+    private func triggerReachGesture(reason: String) {
+        guard currentFrameNumber != lastReachGestureFrame else { return }
+        lastReachGestureFrame = currentFrameNumber
+        overlapReachStreak = 0
+
+        print("🚨 [TestingAR-Gesture] REACH GESTURE DETECTED (\(reason))! Hiding gun...")
+        setGunVisible(false)
+        isResetPending = true
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        NotificationCenter.default.post(
+            name: .arTestingEvent,
+            object: nil,
+            userInfo: [BusKey.arevent: AREvent.reachGesture]
+        )
     }
 
     private func currentImageOrientation() -> CGImagePropertyOrientation {
@@ -1293,33 +1339,68 @@ extension TestingARViewController: ARSessionDelegate {
             let observations = cachedHandObservations
             observationsLock.unlock()
 
-            if !observations.isEmpty,
-               let gunRect = gunScreenRect() {
+            if currentFrameNumber % 60 == 0 {
+                print("👋 [TestingAR-Gesture] Found \(observations.count) hands")
+            }
+
+            if observations.isEmpty {
+                overlapReachStreak = 0
+            } else if let gunRect = gunScreenRect() {
+                if currentFrameNumber % 60 == 0 {
+                    print("🎯 [TestingAR-Gesture] Gun rect: \(gunRect)")
+                }
+
+                var didHitGunRect = false
+                var depthRejectedCount = 0
                 for hand in observations {
                     let pts = (try? hand.recognizedPoints(.all)) ?? [:]
                     for key in [VNHumanHandPoseObservation.JointName.indexTip, .middleTip, .wrist] {
                         guard let rp = pts[key], rp.confidence > 0.35 else { continue }
                         let hp = visionNormToScreen(rp.location)
+
+                        if currentFrameNumber % 30 == 0 {
+                            print("🖐️ [TestingAR-Gesture] Vision: \(rp.location) → Screen: \(hp), gunRect: \(gunRect), contains: \(gunRect.contains(hp))")
+                        }
+
                         guard gunRect.contains(hp) else { continue }
+                        didHitGunRect = true
+
                         if let depthBuf = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap,
                            let handZ = sampleDepthAtScreen(depthBuf, screenPoint: hp),
                            let gunZ = gunDistanceFromCamera(frame: frame) {
                             let isCloserThanGun = handZ + depthMargin < gunZ
                             let isWithinReachDistance = gunZ - handZ < maxReachDistance
-                            guard isCloserThanGun && isWithinReachDistance else { continue }
-                            guard currentFrameNumber != lastReachGestureFrame else { continue }
-                            lastReachGestureFrame = currentFrameNumber
-                            setGunVisible(false)
-                            isResetPending = true
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            NotificationCenter.default.post(
-                                name: .arTestingEvent,
-                                object: nil,
-                                userInfo: [BusKey.arevent: AREvent.reachGesture]
-                            )
-                            return
+                            print("📏 [TestingAR-Gesture] Depth: handZ=\(String(format: "%.2f", handZ)), gunZ=\(String(format: "%.2f", gunZ)), closer=\(isCloserThanGun), withinReach=\(isWithinReachDistance)")
+                            if isCloserThanGun && isWithinReachDistance {
+                                triggerReachGesture(reason: "depth gate passed")
+                                return
+                            } else {
+                                depthRejectedCount += 1
+                            }
                         }
                     }
+                }
+
+                // Sustained overlap fallback (matches stereo mode)
+                if didHitGunRect && wasNear {
+                    overlapReachStreak += 1
+                    if currentFrameNumber % 60 == 0 {
+                        print("⚠️ [TestingAR-Gesture] Hand overlapped gun rect — streak \(overlapReachStreak), depthRejected=\(depthRejectedCount)")
+                    }
+                    if overlapReachStreak >= 3 {
+                        let reason = depthRejectedCount > 0
+                            ? "sustained overlap fallback with noisy depth"
+                            : "sustained overlap fallback"
+                        triggerReachGesture(reason: reason)
+                        return
+                    }
+                } else {
+                    overlapReachStreak = 0
+                }
+            } else {
+                overlapReachStreak = 0
+                if currentFrameNumber % 60 == 0 {
+                    print("⚠️ [TestingAR-Gesture] Could not get gun screen rect")
                 }
             }
         }
@@ -1393,35 +1474,20 @@ struct StartTestingPromptView: View {
     }
 
     private var standardPrompt: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "checklist.checked")
-                .font(.system(size: 64))
-                .foregroundStyle(.green)
-
-            Text("Safety Testing")
-                .font(.largeTitle)
-                .bold()
-
-            Text("You'll practice what you've learned\nin three virtual room scenarios")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Button {
-                onStart()
-            } label: {
-                Text("Touch to Start")
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 20) {
+                Text("Tap anywhere to begin the testing")
                     .font(.headline)
                     .foregroundColor(.white)
-                    .frame(maxWidth: 280)
-                    .padding()
-                    .background(Color.green)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                Image(systemName: "hand.tap.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.white)
+                    .opacity(0.8)
             }
-            .padding(.top, 8)
         }
-        .padding()
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .padding(.horizontal, 40)
+        .onTapGesture { onStart() }
     }
 }
