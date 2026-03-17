@@ -181,6 +181,10 @@
     .nao-question-label { text-align: center; font-size: 12px; font-weight: 700; color: var(--purple); background: rgba(168,85,247,.1); border: 1px solid rgba(168,85,247,.25); border-radius: 8px; padding: 7px 16px; margin-bottom: 10px; }
     .nao-response-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .nao-response-grid .fc-node { width: auto; }
+    .nao-response-grid.nao-single-center {
+      display: flex;
+      justify-content: center;
+    }
 
     /* Video root node */
 
@@ -428,17 +432,234 @@
       </div>
     </div>
 
-    <!-- 5: NAO Robot video -->
-    <div class="slide slide-video" data-label="NAO Robot">
-      <div class="video-header">
-        <div class="module-tag">Module 1 of 3</div>
+    <!-- 4: NAO Robot FLOWCHART -->
+    <div class="slide slide-flowchart" data-label="NAO Robot" data-fc="nao">
+      <div class="flowchart-header">
+        <div class="fc-module-tag">Module 1 of 3</div>
         <h2>NAO Robot Guided Training Module</h2>
-        <p>The robot delivers a firearm-safety lesson for young children. Consider: instructional clarity, tone, age-appropriateness, and engagement for ages 4–7.</p>
+        <p>Watch the intro, then explore each question the robot asks. For each, see how it responds to a good, bad, and ambiguous child answer.</p>
       </div>
-      <div class="video-wrapper">
-        <iframe src="https://drive.google.com/file/d/1_xVYNfgP6_rsnO-S7hTPA7ulys-CFe3Z/preview" allowfullscreen allow="autoplay"></iframe>
+      <div class="flowchart-progress">
+        <span class="fc-prog-label">Watched</span>
+        <div class="fc-prog-bar"><div class="fc-prog-fill" id="fc-prog-nao" style="width:0%; background: var(--purple);"></div></div>
+        <span class="fc-prog-count" id="fc-count-nao" style="color: var(--purple);">0 / 16</span>
       </div>
+
+      <div class="nao-scroll-inner">
+      <div class="nao-flow">
+
+        <!-- Intro card -->
+        <div class="fc-node nao-intro-card" data-variant="intro-purple" id="fc-root-nao" onclick="openIntro('nao', this)">
+          <div class="fc-watched-badge">✓</div>
+          <div class="fc-node-type">Intro Video</div>
+          <div class="fc-node-title">Robot Intro Speech</div>
+          <div class="fc-node-desc">NAO robot introduces the firearm safety lesson. Three age-specific versions available.</div>
+          <div class="fc-play-btn">▶ Watch</div>
+        </div>
+
+        <div class="nao-connector"><div class="nao-connector-line"></div><div class="nao-connector-arrow"></div></div>
+
+        <!-- Question 1 -->
+        <div class="nao-question-block">
+          <div class="nao-question-label">Question 1 — What are different ways you might have seen someone using or carrying a gun?</div>
+          <div class="nao-response-grid">
+            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="0" onclick="openModal('nao',0,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Good Response</div>
+              <div class="fc-node-title">Child Answers Correctly</div>
+              <div class="fc-node-desc">Child gives the right answer. Robot praises and reinforces.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="1" onclick="openModal('nao',1,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Bad Response</div>
+              <div class="fc-node-title">Child Answers Incorrectly</div>
+              <div class="fc-node-desc">Child gives the wrong answer. Robot gently corrects and re-teaches.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="2" onclick="openModal('nao',2,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Ambiguous Response</div>
+              <div class="fc-node-title">Child Answers Unclearly</div>
+              <div class="fc-node-desc">Child's answer is unclear or partial. Robot prompts for clarification.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nao-connector"><div class="nao-connector-line"></div><div class="nao-connector-arrow"></div></div>
+
+        <!-- Question 2 -->
+        <div class="nao-question-block">
+          <div class="nao-question-label">Question 2 — Why do you think they carry a gun?</div>
+          <div class="nao-response-grid">
+            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="3" onclick="openModal('nao',3,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Good Response</div>
+              <div class="fc-node-title">Child Answers Correctly</div>
+              <div class="fc-node-desc">Child gives the right answer. Robot praises and reinforces.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="4" onclick="openModal('nao',4,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Bad Response</div>
+              <div class="fc-node-title">Child Answers Incorrectly</div>
+              <div class="fc-node-desc">Child gives the wrong answer. Robot gently corrects and re-teaches.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="5" onclick="openModal('nao',5,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Ambiguous Response</div>
+              <div class="fc-node-title">Child Answers Unclearly</div>
+              <div class="fc-node-desc">Child's answer is unclear or partial. Robot prompts for clarification.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+          </div>
+        </div>
+
+
+
+        <div class="nao-connector">
+          <div class="nao-connector-line"></div>
+          <div class="nao-connector-arrow"></div>
+        </div>
+
+        <div class="nao-question-block">
+          <div class="nao-question-label">Story Scenario</div>
+
+          <div class="nao-response-grid nao-single-center">
+
+            <div class="fc-node" data-variant="lesson" data-fc="nao" data-idx="6" onclick="openModal('nao',6,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Story</div>
+              <div class="fc-node-title">Park Story Example</div>
+              <div class="fc-node-desc">Robot tells a story about children finding a gun in the park.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="nao-connector"><div class="nao-connector-line"></div><div class="nao-connector-arrow"></div></div>
+
+
+        <!-- Question 3 -->
+        <div class="nao-question-block">
+          <div class="nao-question-label">Question 3 — What do you think the children should do if they find a gun?</div>
+          <div class="nao-response-grid">
+            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="6" onclick="openModal('nao',6,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Good Response</div>
+              <div class="fc-node-title">Child Answers Correctly</div>
+              <div class="fc-node-desc">Child gives the right answer. Robot praises and reinforces.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="7" onclick="openModal('nao',7,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Bad Response</div>
+              <div class="fc-node-title">Child Answers Incorrectly</div>
+              <div class="fc-node-desc">Child gives the wrong answer. Robot gently corrects and re-teaches.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="8" onclick="openModal('nao',8,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Ambiguous Response</div>
+              <div class="fc-node-title">Child Answers Unclearly</div>
+              <div class="fc-node-desc">Child's answer is unclear or partial. Robot prompts for clarification.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+          </div>
+        </div>
+
+
+
+        <div class="nao-connector">
+          <div class="nao-connector-line"></div>
+          <div class="nao-connector-arrow"></div>
+        </div>
+
+        <div class="nao-question-block">
+          <div class="nao-question-label">Instruction — Four Safety Steps</div>
+
+          <div class="nao-response-grid nao-single-center">
+
+            <div class="fc-node" data-variant="lesson" data-fc="nao" data-idx="10" onclick="openModal('nao',10,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Instruction</div>
+              <div class="fc-node-title">Stop, Don't Touch, Run Away, Tell an Adult</div>
+              <div class="fc-node-desc">Robot teaches the four safety steps children should follow.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="nao-connector">
+          <div class="nao-connector-line"></div>
+          <div class="nao-connector-arrow"></div>
+        </div>
+
+        <div class="nao-question-block">
+          <div class="nao-question-label">Question 4 — What do you think the adult should do once Kevin, Jimmy, and Roscoe tell him or her about the gun?</div>
+
+          <div class="nao-response-grid">
+
+            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="11" onclick="openModal('nao',11,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Good Response</div>
+              <div class="fc-node-title">Child Answers Correctly</div>
+              <div class="fc-node-desc">Child gives the right answer. Robot praises and reinforces.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+
+            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="12" onclick="openModal('nao',12,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Bad Response</div>
+              <div class="fc-node-title">Child Answers Incorrectly</div>
+              <div class="fc-node-desc">Child gives the wrong answer. Robot gently corrects and re-teaches.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+
+            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="13" onclick="openModal('nao',13,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Ambiguous Response</div>
+              <div class="fc-node-title">Child Answers Unclearly</div>
+              <div class="fc-node-desc">Child's answer is unclear or partial. Robot prompts for clarification.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="nao-connector">
+          <div class="nao-connector-line"></div>
+          <div class="nao-connector-arrow"></div>
+        </div>
+
+        <div class="nao-question-block">
+          <div class="nao-question-label">Conclusion</div>
+
+          <div class="nao-response-grid nao-single-center">
+
+            <div class="fc-node" data-variant="lesson" data-fc="nao" data-idx="14" onclick="openModal('nao',14,this)">
+              <div class="fc-watched-badge">✓</div>
+              <div class="fc-node-type">Lesson</div>
+              <div class="fc-node-title">Adult Steps to Follow</div>
+              <div class="fc-node-desc">Robot explains what steps adults should follow and finishes training.</div>
+              <div class="fc-play-btn">▶ Watch</div>
+            </div>
+
+          </div>
+        </div>
+
+      </div><!-- /nao-flow -->
+
+      <div class="all-watched-banner" id="banner-nao">
+        <p>All clips watched — you can now move on to the survey.</p>
+      </div>
+      </div><!-- /nao-scroll-inner -->
     </div>
+
 
     <!-- 5: Survey 2 -->
     <div class="slide slide-survey" data-label="Survey #2">
@@ -765,6 +986,55 @@
 <script>
   // ── VIDEO DATA ──
   const fcData = {
+    nao: {
+      progressBar: 'fc-prog-nao', countEl: 'fc-count-nao', banner: 'banner-nao',
+      svgId: null, // linear layout — no SVG connectors
+      lineColor: '#a855f7', watched: new Set(),
+      intro: { title: 'Robot Intro Speech', desc: 'NAO robot introduces the firearm safety lesson. Three age-specific versions are available based on the child\'s age group.', file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=7e6dffe1-6346-425c-935a-019628ae1672&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+      nodes: [
+        // Question 1
+        { variant: 'correct',   typeLabel: 'Good Response',      title: 'Q1 — Child Answers Correctly',  desc: 'Child gives the right answer. Robot praises and reinforces.',              file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=abd98953-b50d-4d80-ae6f-cf32aac3035f&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        { variant: 'incorrect', typeLabel: 'Bad Response',       title: 'Q1 — Child Answers Incorrectly',desc: 'Child gives the wrong answer. Robot gently corrects and re-teaches.',      file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=21518527-f395-42d0-ab9e-8523fbe2c33f&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        { variant: 'partial',   typeLabel: 'Ambiguous Response', title: 'Q1 — Child Answers Unclearly',  desc: 'Child\'s answer is unclear or partial. Robot prompts for clarification.', file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=eaabf36d-9d72-4be7-b9f0-d0e9b93c2120&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        // Question 2
+        { variant: 'correct',   typeLabel: 'Good Response',      title: 'Q2 — Child Answers Correctly',  desc: 'Child gives the right answer. Robot praises and reinforces.',              file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=759c7727-0b78-4c31-82b8-2066b4ea6667&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        { variant: 'incorrect', typeLabel: 'Bad Response',       title: 'Q2 — Child Answers Incorrectly',desc: 'Child gives the wrong answer. Robot gently corrects and re-teaches.',      file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=b239cda0-3923-44e1-99b2-81f747a6fdb9&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        { variant: 'partial',   typeLabel: 'Ambiguous Response', title: 'Q2 — Child Answers Unclearly',  desc: 'Child\'s answer is unclear or partial. Robot prompts for clarification.', file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=7ff47e3f-92e0-4ee9-aef0-25446a6e5133&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        // ───── Story Scenario ─────
+        {
+          variant: 'lesson',
+          typeLabel: 'Story',
+          title: 'Story Scenario',
+          desc: 'Robot tells a short story about children encountering a gun in a park.',
+          file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=118b23dd-0a46-44e0-bcad-42d6d9e42e62&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create'
+        },
+        
+        // Question 3
+        { variant: 'correct',   typeLabel: 'Good Response',      title: 'Q3 — Child Answers Correctly',  desc: 'Child gives the right answer. Robot praises and reinforces.',              file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=cc46b590-ee4c-4216-8416-750c397169a7&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        { variant: 'incorrect', typeLabel: 'Bad Response',       title: 'Q3 — Child Answers Incorrectly',desc: 'Child gives the wrong answer. Robot gently corrects and re-teaches.',      file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=fcebda0d-e5e9-4508-b534-270722fd0e06&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        { variant: 'partial',   typeLabel: 'Ambiguous Response', title: 'Q3 — Child Answers Unclearly',  desc: 'Child\'s answer is unclear or partial. Robot prompts for clarification.', file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=50b87746-0503-4b4f-a06d-8cbcac5f5d70&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        // ───── Instructions ─────
+        {
+          variant: 'lesson',
+          typeLabel: 'Instruction',
+          title: 'Four Firearm Safety Steps',
+          desc: 'Robot teaches the four steps: Stop, Don’t Touch, Run Away, Tell an Adult.',
+          file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=4464413c-472b-4e3e-84aa-e52310399856&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create'
+        },
+        // Question 4
+        { variant: 'correct',   typeLabel: 'Good Response',      title: 'Q4 — Child Answers Correctly',  desc: 'Child gives the right answer. Robot praises and reinforces.',              file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=5c91b04f-ea73-4597-b0b6-3240252077c2&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        { variant: 'incorrect', typeLabel: 'Bad Response',       title: 'Q4 — Child Answers Incorrectly',desc: 'Child gives the wrong answer. Robot gently corrects and re-teaches.',      file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=baeb727d-051f-4ac6-a67e-07ad3b3e7874&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        { variant: 'partial',   typeLabel: 'Ambiguous Response', title: 'Q4 — Child Answers Unclearly',  desc: 'Child\'s answer is unclear or partial. Robot prompts for clarification.', file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=91fa38fb-b2f9-4b71-bf19-0d898f8a7c2b&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create' },
+        // ───── Final Conclusion ─────
+        {
+          variant: 'lesson',
+          typeLabel: 'Conclusion',
+          title: 'Tell a Trusted Adult',
+          desc: 'Robot explains who trusted adults are and reminds the child to tell one if they find a gun.',
+          file: 'https://myuva-my.sharepoint.com/personal/qez3aa_virginia_edu/_layouts/15/embed.aspx?UniqueId=1a2cc85c-fbac-48e5-9961-8a0fd6414b8d&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Atrue%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create'
+        },
+      ],
+    },
     ar1: {
       progressBar: 'fc-prog-ar1', countEl: 'fc-count-ar1', banner: 'banner-ar1',
       canvasId: 'fc-canvas-ar1', rootId: 'fc-root-ar1', nodesId: 'fc-nodes-ar1', svgId: 'fc-svg-ar1',
