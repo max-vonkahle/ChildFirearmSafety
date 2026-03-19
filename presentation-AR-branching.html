@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Session Presentation (Branching) — Protocol #8042</title>
+  <title>Firearm Safety Education in Youth</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -377,6 +377,7 @@
     <div class="slide" data-label="Overview">
       <div class="slide-section-h">What You'll Be Evaluating</div>
       <div class="slide-section-sub">Today's session has three modules, evaluated in order. After each, you'll complete a short Qualtrics survey.</div>
+      <div class="slide-section-sub" style="margin-top: -8px; font-size: 13px;">While each module has its own evaluation, please keep in mind that together they form a single sequential program — a child would experience all three in order. Evaluate each module on its own merits, but consider how it fits within that overall experience.</div>
       <div class="overview-grid">
         <div class="overview-card">
           <div class="num">01</div>
@@ -1037,22 +1038,22 @@
     },
     ar1: {
       progressBar: 'fc-prog-ar1', countEl: 'fc-count-ar1', banner: 'banner-ar1',
-      canvasId: 'fc-canvas-ar1', rootId: 'fc-root-ar1', nodesId: 'fc-nodes-ar1', svgId: 'fc-svg-ar1',
-      lineColor: '#3b82f6', watched: new Set(),
+      canvasId: 'fc-canvas-ar1', rootId: null, nodesId: 'fc-nodes-ar1', svgId: 'fc-svg-ar1',
+      sequential: true, lineColor: '#3b82f6', watched: new Set(),
       nodes: [
         { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Knows All Four Rules',    desc: 'Child correctly recites all four steps (Stop, Don\'t Touch, Run Away, Tell an Adult) and the tell-adult phrase. The AI praises them and transitions to the Act Out phase.', file: 'https://drive.google.com/file/d/11aOlIsy_YOAJU7PwQioMArHJMr2lfKrY/preview' },
         { variant: 'partial',   typeLabel: 'Doesn\'t Know',      title: 'Doesn\'t Know the Rules', desc: 'Child says they don\'t know. The AI walks through each rule one at a time, asking the child to repeat it before moving to the next.', file: 'https://drive.google.com/file/d/1ADM2APLzVk7exbDdIrDDWZXFPGBuv-ud/preview' },
-        { variant: 'incorrect', typeLabel: 'Incorrect Response',  title: 'Says Wrong Rules',        desc: 'Child attempts to recite but states incorrect steps. The AI corrects each mistake and re-prompts until all four rules are said correctly.', file: 'https://drive.google.com/file/d/1ECdm0o9j8mv3o3oAO2wg2NvWFTkSQr9y/preview' },
-        { variant: 'incorrect', typeLabel: 'Incorrect Response',  title: 'Reaches for the Gun',     desc: 'Child reaches toward the gun during the recitation phase. AR hides it immediately. AI corrects the behavior and resets the scene.', file: 'https://drive.google.com/file/d/1x-n47bDYcgNUA2eyBHSaF_oBCoiJeC2x/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response',  title: 'Says Wrong Rules',        desc: 'Child attempts to recite but states incorrect steps. The AI corrects each mistake and re-prompts until all four rules are said correctly.', file: 'https://drive.google.com/file/d/18Y_V_9Hl3af64HkBV1siEufDpDMVeyDl/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response',  title: 'Reaches for the Gun',     desc: 'Child reaches toward the gun during the recitation phase. AR hides it immediately. AI corrects the behavior and resets the scene.', file: 'https://drive.google.com/file/d/1jdNVjJ1R3Ptcn0wMLCGSLt7z3XAUo8hS/preview' },
       ],
     },
     ar2: {
       progressBar: 'fc-prog-ar2', countEl: 'fc-count-ar2', banner: 'banner-ar2',
-      canvasId: 'fc-canvas-ar2', rootId: 'fc-root-ar2', nodesId: 'fc-nodes-ar2', svgId: 'fc-svg-ar2',
-      lineColor: '#f59e0b', watched: new Set(),
+      canvasId: 'fc-canvas-ar2', rootId: null, nodesId: 'fc-nodes-ar2', svgId: 'fc-svg-ar2',
+      sequential: true, lineColor: '#f59e0b', watched: new Set(),
       nodes: [
-        { variant: 'correct',   typeLabel: 'Correct Response',  title: 'Runs Away & Tells Adult', desc: 'Child retreats ≥1.5m from the gun, then spontaneously calls out to a trusted adult within 3 seconds. The AI praises both actions and completes the training session.', file: 'https://drive.google.com/file/d/1VM9x8TiRqzj_udfNpgEz-NFsZRhIp_O6/preview' },
-        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Reaches for the Gun', desc: 'Child reaches toward the gun. AR immediately hides it. AI corrects: "Remember, we never touch a gun. Go back to the red circle and tap to reset." Child must return to start marker.', file: 'https://drive.google.com/file/d/1bA2HU5glAZF1lCrBDniN1RTVQNxEXkHX/preview' },
+        { variant: 'correct',   typeLabel: 'Correct Response',  title: 'Runs Away & Tells Adult', desc: 'Child retreats ≥1.5m from the gun, then spontaneously calls out to a trusted adult within 3 seconds. The AI praises both actions and completes the training session.', file: 'https://drive.google.com/file/d/19ImfCnBWA4mmEt7qEnrQxIqeDcYNpxhz/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Reaches for the Gun', desc: 'Child reaches toward the gun. AR immediately hides it. AI corrects: "Remember, we never touch a gun. Go back to the red circle and tap to reset." Child must return to start marker.', file: 'https://drive.google.com/file/d/1H3YgxXmVvAr__5DsjOqFl-NVnz7C4LWM/preview' },
       ],
     },
     sim: {
@@ -1061,14 +1062,14 @@
       lineColor: '#22c55e', watched: new Set(),
       nodes: [
         // Kitchen
-        { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Kitchen — Does & Says Right Steps', desc: 'Child correctly performs and verbalizes all four safety steps in the kitchen. Observe the positive reinforcement.',          file: 'https://drive.google.com/file/d/1pFf0DkLU24sQbptJLc5L21cFckKdXyAb/preview' },
-        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Kitchen — Reaches for the Gun',     desc: 'Child physically reaches toward or touches the firearm. Observe how the AI system detects and responds.',                  file: 'https://drive.google.com/file/d/11vO5fDI6kunkutrj_k8R91WRwqAKgQ0x/preview' },
+        { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Kitchen — Does & Says Right Steps', desc: 'Child correctly performs and verbalizes all four safety steps in the kitchen. Observe the positive reinforcement.',          file: 'https://drive.google.com/file/d/1WAqNGuQSXxrE-ilnDeUPWrs93y8-FoQJ/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Kitchen — Reaches for the Gun',     desc: 'Child physically reaches toward or touches the firearm. Observe how the AI system detects and responds.',                  file: 'https://drive.google.com/file/d/1cFn8uRenmnJAQG-yEniyhg3tY3YO9M93/preview' },
         // Garage
-        { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Garage — Does & Says Right Steps',  desc: 'Child correctly performs and verbalizes all four safety steps in the garage. Observe the positive reinforcement.',           file: 'https://drive.google.com/file/d/PASTE_GARAGE_CORRECT_DRIVE_ID/preview' },
-        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Garage — Reaches for the Gun',      desc: 'Child physically reaches toward or touches the firearm. Observe how the AI system detects and responds.',                  file: 'https://drive.google.com/file/d/PASTE_GARAGE_INCORRECT_DRIVE_ID/preview' },
+        { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Garage — Does & Says Right Steps',  desc: 'Child correctly performs and verbalizes all four safety steps in the garage. Observe the positive reinforcement.',           file: 'https://drive.google.com/file/d/1olQvKIVMnJQtg3oyMvIDhs45M9R7YRxt/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Garage — Reaches for the Gun',      desc: 'Child physically reaches toward or touches the firearm. Observe how the AI system detects and responds.',                  file: 'https://drive.google.com/file/d/1k67B_V3dEkjAooNI5ionAISgbmLBCfb9/preview' },
         // Bedroom
-        { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Bedroom — Does & Says Right Steps', desc: 'Child correctly performs and verbalizes all four safety steps in the bedroom. Observe the positive reinforcement.',         file: 'https://drive.google.com/file/d/PASTE_BEDROOM_CORRECT_DRIVE_ID/preview' },
-        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Bedroom — Reaches for the Gun',     desc: 'Child physically reaches toward or touches the firearm. Observe how the AI system detects and responds.',                  file: 'https://drive.google.com/file/d/PASTE_BEDROOM_INCORRECT_DRIVE_ID/preview' },
+        { variant: 'correct',   typeLabel: 'Correct Response',   title: 'Bedroom — Does & Says Right Steps', desc: 'Child correctly performs and verbalizes all four safety steps in the bedroom. Observe the positive reinforcement.',         file: 'https://drive.google.com/file/d/1AyOcS680iqIRkaZhfDIl7t8irj2qV_Jk/preview' },
+        { variant: 'incorrect', typeLabel: 'Incorrect Response', title: 'Bedroom — Reaches for the Gun',     desc: 'Child physically reaches toward or touches the firearm. Observe how the AI system detects and responds.',                  file: 'https://drive.google.com/file/d/1mCkRPSLLkyk11ChpA_7jPohU4SNFKa0Z/preview' },
       ],
     },
   };
@@ -1265,29 +1266,53 @@
     if (!fc.svgId) return; // linear layouts (e.g. nao) have no SVG
     const svg = document.getElementById(fc.svgId);
     const canvas = document.getElementById(fc.canvasId);
-    const root = document.getElementById(fc.rootId);
-    const nodes = document.querySelectorAll(`.fc-node[data-fc="${fcId}"]`);
-    if (!svg || !canvas || !root) return;
+    const nodes = Array.from(document.querySelectorAll(`.fc-node[data-fc="${fcId}"]`));
+    if (!svg || !canvas) return;
     svg.innerHTML = '';
     const cr = canvas.getBoundingClientRect();
-    const rr = root.getBoundingClientRect();
-    const rx = rr.left - cr.left + rr.width / 2;
-    const ry = rr.bottom - cr.top;
-    nodes.forEach(node => {
-      const nr = node.getBoundingClientRect();
-      const nx = nr.left - cr.left + nr.width / 2;
-      const ny = nr.top - cr.top;
-      const watched = node.classList.contains('watched');
-      const my = (ry + ny) / 2;
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', `M ${rx} ${ry} C ${rx} ${my}, ${nx} ${my}, ${nx} ${ny}`);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', fc.lineColor);
-      path.setAttribute('stroke-width', watched ? '2.5' : '2');
-      path.setAttribute('stroke-dasharray', watched ? 'none' : '6 4');
-      path.setAttribute('opacity', watched ? '0.9' : '0.3');
-      svg.appendChild(path);
-    });
+
+    if (fc.sequential) {
+      // Draw lines from the right edge of each node to the left edge of the next
+      for (let i = 0; i < nodes.length - 1; i++) {
+        const ar = nodes[i].getBoundingClientRect();
+        const br = nodes[i + 1].getBoundingClientRect();
+        const x1 = ar.right - cr.left;
+        const y1 = ar.top - cr.top + ar.height / 2;
+        const x2 = br.left - cr.left;
+        const y2 = br.top - cr.top + br.height / 2;
+        const mx = (x1 + x2) / 2;
+        const bothWatched = nodes[i].classList.contains('watched') && nodes[i + 1].classList.contains('watched');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', fc.lineColor);
+        path.setAttribute('stroke-width', bothWatched ? '2.5' : '2');
+        path.setAttribute('stroke-dasharray', bothWatched ? 'none' : '6 4');
+        path.setAttribute('opacity', bothWatched ? '0.9' : '0.35');
+        svg.appendChild(path);
+      }
+    } else {
+      const root = document.getElementById(fc.rootId);
+      if (!root) return;
+      const rr = root.getBoundingClientRect();
+      const rx = rr.left - cr.left + rr.width / 2;
+      const ry = rr.bottom - cr.top;
+      nodes.forEach(node => {
+        const nr = node.getBoundingClientRect();
+        const nx = nr.left - cr.left + nr.width / 2;
+        const ny = nr.top - cr.top;
+        const watched = node.classList.contains('watched');
+        const my = (ry + ny) / 2;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${rx} ${ry} C ${rx} ${my}, ${nx} ${my}, ${nx} ${ny}`);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', fc.lineColor);
+        path.setAttribute('stroke-width', watched ? '2.5' : '2');
+        path.setAttribute('stroke-dasharray', watched ? 'none' : '6 4');
+        path.setAttribute('opacity', watched ? '0.9' : '0.3');
+        svg.appendChild(path);
+      });
+    }
   }
 
   window.addEventListener('resize', () => {
