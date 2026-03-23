@@ -178,7 +178,9 @@
     .nao-connector-line { width: 2px; height: 22px; background: linear-gradient(to bottom, rgba(168,85,247,.5), rgba(168,85,247,.2)); }
     .nao-connector-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid rgba(168,85,247,.4); }
     .nao-question-block { width: 100%; max-width: 700px; margin-bottom: 0; }
-    .nao-question-label { text-align: center; font-size: 12px; font-weight: 700; color: var(--purple); background: rgba(168,85,247,.1); border: 1px solid rgba(168,85,247,.25); border-radius: 8px; padding: 7px 16px; margin-bottom: 10px; }
+    .nao-question-label { text-align: center; font-size: 12px; font-weight: 700; color: var(--purple); background: rgba(168,85,247,.1); border: 1px solid rgba(168,85,247,.25); border-radius: 8px; padding: 7px 16px; margin-bottom: 10px; transition: background .15s, border-color .15s, color .15s; }
+    @keyframes nao-label-flash { 0%,100% { background: rgba(168,85,247,.1); border-color: rgba(168,85,247,.25); color: var(--purple); } 40% { background: rgba(168,85,247,.35); border-color: rgba(168,85,247,.8); color: #fff; } }
+    .nao-question-label.nao-highlight { animation: nao-label-flash 1.1s ease; }
     .nao-response-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .nao-response-grid .fc-node { width: auto; }
     .nao-response-grid.nao-single-center {
@@ -548,21 +550,21 @@
         <div class="nao-question-block">
           <div class="nao-question-label">Question 3 — What do you think the children should do if they find a gun?</div>
           <div class="nao-response-grid">
-            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="6" onclick="openModal('nao',6,this)">
+            <div class="fc-node" data-variant="correct" data-fc="nao" data-idx="7" onclick="openModal('nao',7,this)">
               <div class="fc-watched-badge">✓</div>
               <div class="fc-node-type">Good Response</div>
               <div class="fc-node-title">Child Answers Correctly</div>
               <div class="fc-node-desc">Child gives the right answer. Robot praises and reinforces.</div>
               <div class="fc-play-btn">▶ Watch</div>
             </div>
-            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="7" onclick="openModal('nao',7,this)">
+            <div class="fc-node" data-variant="incorrect" data-fc="nao" data-idx="8" onclick="openModal('nao',8,this)">
               <div class="fc-watched-badge">✓</div>
               <div class="fc-node-type">Bad Response</div>
               <div class="fc-node-title">Child Answers Incorrectly</div>
               <div class="fc-node-desc">Child gives the wrong answer. Robot gently corrects and re-teaches.</div>
               <div class="fc-play-btn">▶ Watch</div>
             </div>
-            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="8" onclick="openModal('nao',8,this)">
+            <div class="fc-node" data-variant="partial" data-fc="nao" data-idx="9" onclick="openModal('nao',9,this)">
               <div class="fc-watched-badge">✓</div>
               <div class="fc-node-type">Ambiguous Response</div>
               <div class="fc-node-title">Child Answers Unclearly</div>
@@ -757,8 +759,8 @@
     <div class="slide slide-flowchart" data-label="Act Out" data-fc="ar2">
       <div class="flowchart-header">
         <div class="fc-module-tag">Module 2 of 3 &nbsp;·&nbsp; Physical Act Out</div>
-        <h2>Interactive Interactive AR Training Module</h2>
-        <p>The child physically encounters the gun in AR. The AI coach observes silently and responds based on what the child does. These clips show the possible outcomes.</p>
+        <h2>Interactive AR Training Module — Act Out</h2>
+        <p>The AI coach prompts the child to act out what they would do if they encounter a gun, then observes and responds based on what the child does. These clips show the possible outcomes.</p>
       </div>
       <div class="flowchart-canvas" id="fc-canvas-ar2">
         <div class="flowchart-progress">
@@ -1246,8 +1248,72 @@
     });
   }
 
+  function getNaoNextSectionLabel(idx) {
+    // Find the fc-node element (or intro card) and its containing nao-question-block
+    const nodeEl = idx === 'intro'
+      ? document.getElementById('fc-root-nao')
+      : document.querySelector(`.fc-node[data-fc="nao"][data-idx="${idx}"]`);
+    if (!nodeEl) return null;
+    const block = nodeEl.closest('.nao-question-block, .nao-intro-card') || nodeEl.parentElement?.closest('.nao-question-block');
+    if (!block) return null;
+    // Walk siblings of the block's parent to find the next nao-question-block
+    let next = block.nextElementSibling;
+    while (next) {
+      if (next.classList.contains('nao-question-block')) {
+        return next.querySelector('.nao-question-label');
+      }
+      next = next.nextElementSibling;
+    }
+    return null;
+  }
+
+  function markWatchedAndHighlightNext() {
+    if (modalFcId !== null && modalIdx !== null) doMarkWatched(modalFcId, modalIdx);
+    const fcId = modalFcId, idx = modalIdx;
+    closeModal(() => {
+      clearActiveCard();
+      const label = getNaoNextSectionLabel(idx);
+      if (label) {
+        label.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => {
+          label.classList.remove('nao-highlight');
+          label.offsetWidth; // reflow to restart animation
+          label.classList.add('nao-highlight');
+          label.addEventListener('animationend', () => label.classList.remove('nao-highlight'), { once: true });
+        }, 400);
+      }
+    });
+  }
+
+  function naoNextInSameBlock(idx) {
+    // Returns true if the next sequential idx is in the same nao-question-block as idx
+    const nextIdx = getNextIdx('nao', idx);
+    if (nextIdx === null) return false;
+    const el1 = idx === 'intro'
+      ? document.getElementById('fc-root-nao')
+      : document.querySelector(`.fc-node[data-fc="nao"][data-idx="${idx}"]`);
+    const el2 = document.querySelector(`.fc-node[data-fc="nao"][data-idx="${nextIdx}"]`);
+    if (!el1 || !el2) return false;
+    const b1 = el1.closest('.nao-question-block');
+    const b2 = el2.closest('.nao-question-block');
+    return b1 && b2 && b1 === b2;
+  }
+
   function updateActionBtn(fcId, idx) {
     const btn = document.getElementById('modal-action-btn');
+    if (fcId === 'nao') {
+      if (naoNextInSameBlock(idx)) {
+        btn.textContent = '✓ Mark as Watched & Continue →';
+        btn.onclick = markWatchedAndContinue;
+      } else if (getNaoNextSectionLabel(idx) !== null) {
+        btn.textContent = '✓ Mark as Watched & Close';
+        btn.onclick = markWatchedAndHighlightNext;
+      } else {
+        btn.textContent = '✓ Mark as Watched & Close';
+        btn.onclick = markWatchedAndClose;
+      }
+      return;
+    }
     const hasNext = getNextIdx(fcId, idx) !== null;
     if (hasNext) {
       btn.textContent = '✓ Mark as Watched & Continue →';
