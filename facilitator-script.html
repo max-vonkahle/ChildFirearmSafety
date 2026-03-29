@@ -371,7 +371,7 @@
   <div class="section-card" id="s1">
     <div class="section-header">
       <h2>SECTION 1: Welcome &amp; Consent Review</h2>
-      <span class="timing">~5 min</span>
+      <span class="timing">~3 min</span>
     </div>
     <div class="section-body">
       <div class="action">Admit participant from waiting room</div>
@@ -391,14 +391,16 @@
 
       <div class="spoken">"I see that you've already signed the consent form through DocuSign - thank you for that. Just to quickly recap: this study is evaluating a firearm-safety education system designed for children ages 4 to 7. We're gathering expert feedback before any testing with children. Your participation is completely voluntary and all your responses will be de-identified."</div>
 
+      <div class="spoken">"Before we begin, I'm going to assign you a subject ID number. Please use this same ID for all of the surveys today. Your subject ID is [##]."</div>
+
       <div class="spoken">"Do you have any questions before we get started?"</div>
 
       <div class="reminder">Pause and answer any questions. If they haven't signed consent yet, walk them through the DocuSign process now before proceeding.</div>
 
       <div class="timer-block">
-        <div class="timer-display" id="timer-s1">5:00</div>
-        <button class="timer-btn timer-start" onclick="startTimer('s1', 5)">Start</button>
-        <button class="timer-btn timer-reset" onclick="resetTimer('s1', 5)">Reset</button>
+        <div class="timer-display" id="timer-s1">3:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s1', 3)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s1', 3)">Reset</button>
         <span class="timer-label">Section timer</span>
       </div>
     </div>
@@ -408,7 +410,7 @@
   <div class="section-card" id="s2">
     <div class="section-header">
       <h2>SECTION 2: Pre-Task Survey (Demographics)</h2>
-      <span class="timing">~5 min</span>
+      <span class="timing">~3 min</span>
     </div>
     <div class="section-body">
       <div class="spoken">"Great. Let's start with a brief background survey. I'm going to drop the link in the Zoom chat now. This covers some demographic and professional background questions. Take your time and let me know when you're done."</div>
@@ -426,14 +428,14 @@
 
       <div class="reminder">Participant's study ID should be pre-filled or communicated to them so they can enter it. Stay available for questions but don't rush them.</div>
 
-      <div class="timing-note">Wait for participant to finish (~5 min)</div>
+      <div class="timing-note">Wait for participant to finish (~2 min)</div>
 
       <div class="spoken">"Thank you. Now I'm going to give you a quick overview of what you'll be evaluating today, and then we'll jump into the first module."</div>
 
       <div class="timer-block">
-        <div class="timer-display" id="timer-s2">5:00</div>
-        <button class="timer-btn timer-start" onclick="startTimer('s2', 5)">Start</button>
-        <button class="timer-btn timer-reset" onclick="resetTimer('s2', 5)">Reset</button>
+        <div class="timer-display" id="timer-s2">3:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s2', 3)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s2', 3)">Reset</button>
         <span class="timer-label">Section timer</span>
       </div>
     </div>
@@ -443,7 +445,7 @@
   <div class="section-card" id="s3">
     <div class="section-header">
       <h2>SECTION 3: System Overview &amp; Instructions</h2>
-      <span class="timing">~5 min</span>
+      <span class="timing">~2 min</span>
     </div>
     <div class="section-body">
       <div class="spoken">"The system we're evaluating has three components, and we'll go through them in order:"</div>
@@ -454,16 +456,16 @@
         <li><strong>Module 3:</strong> Third, three realistic AR simulation scenarios where children encounter a firearm in everyday settings and need to apply what they've learned.</li>
       </ul>
 
-      <div class="spoken">"For each module, I'll screen-share a prerecorded video demonstration. After each video, I'll send you a short Qualtrics survey to complete. We're looking for your expert evaluation of things like age-appropriateness, clarity, ethical considerations, and feasibility."</div>
+      <div class="spoken">"For each module, I'll screen-share a prerecorded video demonstration. After each video, I'll send you a short Qualtrics survey to complete. We're looking for your expert evaluation of things like age-appropriateness, clarity, ethical considerations, and feasibility. I would also like to mention that the people in these videos are members of the research team and not children. These recordings are demonstrations of the system, which is ultimately designed for use with children."</div>
 
       <div class="spoken">"Any questions about the overall structure before we begin?"</div>
 
       <div class="reminder">Pause for questions. Then transition to Phase 1.</div>
 
       <div class="timer-block">
-        <div class="timer-display" id="timer-s3">5:00</div>
-        <button class="timer-btn timer-start" onclick="startTimer('s3', 5)">Start</button>
-        <button class="timer-btn timer-reset" onclick="resetTimer('s3', 5)">Reset</button>
+        <div class="timer-display" id="timer-s3">2:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s3', 2)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s3', 2)">Reset</button>
         <span class="timer-label">Section timer</span>
       </div>
     </div>
@@ -476,22 +478,35 @@
   <div class="section-card" id="s4">
     <div class="section-header">
       <h2>SECTION 4: NAO Robot Guided Training Module</h2>
-      <span class="timing">~8 min</span>
+      <span class="timing">~13 min</span>
     </div>
     <div class="section-body">
-      <div class="action">Start screen-share → Click Next to the NAO Robot slide</div>
 
-      <div class="spoken">"Alright, let's move into the first module. This shows the NAO robot delivering a firearm-safety lesson designed for young children. I'll start with the robot's intro, then show you how it responds to different child answers for each question. As you watch, think about instructional clarity, tone, age-appropriateness, and how engaging this would be for a child ages 4 to 7."</div>
+      <div class="spoken"> "Alright, let's move into the first module. We will walk you through an interactive version of the NAO robot firearm-safety lesson.<br><br>
+      
+      Before we begin, just a quick note: in real use, this is designed to function as one cohesive training experience where the robot responds dynamically to a child's answer. The child would only experience one path based on how they respond.<br><br>
+      
+      For the purposes of this study, we'll be showing you all possible response paths - correct, incorrect, and unclear - so you can evaluate the full range of how the system behaves.<br><br>
+      
+      As you watch, please think about the instructional clarity, tone, age-appropriateness, and how engaging this would be for a child ages 4 to 7."
+      </div>
 
-      <div class="reminder">16 clips total. Order: Intro → Q1 (good / bad / ambiguous) → Q2 (good / bad / ambiguous) → Story Scenario → Q3 (good / bad / ambiguous) → Instruction → Q4 (good / bad / ambiguous) → Conclusion. Click each card to open the video; click "Mark as Watched &amp; Close" (or Continue within a row) to proceed. The progress counter tracks completion.</div>
 
-      <div class="timing-note">16 clips total — ~5–8 min depending on pacing</div>
+     
+      <div class="spoken">"First, you'll see how the robot introduces the lesson."</div>
+      <div class="spoken">"Now the robot asks its first question. We'll look at all three possible response paths."</div>
+      <div class="spoken">"Next, the robot introduces a short story scenario to help illustrate the situation."</div>
+      <div class="spoken">"Here, the robot explicitly teaches the four key safety steps."</div>
+      <div class="spoken">"Finally, the robot asks about what a trusted adult should do."</div>
+      <div class="spoken">"This final part explains what an adult should do and concludes the training."</div>
 
-      <div class="action">Work through all 16 clips, then click Next to the Survey #2 slide</div>
+      <div class="action">Work through full module, then proceed to Survey #2</div>
 
-      <div class="spoken">"Thank you for watching those. I'm now going to send you a short survey about what you just saw. It covers the clarity of the instruction, the robot's tone and pacing, and whether you think it's appropriate for young children."</div>
+      <div class="spoken">
+        "Thank you for watching that. I'm now going to send you a short survey about what you just saw. It covers things like the clarity of the instruction, the robot’s tone and pacing, and whether you think it’s appropriate for young children."
+      </div>
 
-      <div class="action">Paste Survey #2 (Post-NAO Robot) link in Zoom chat</div>
+      <div class="action">▶ Paste Survey #2 (Post-NAO Robot) link in Zoom chat</div>
 
       <div class="survey-block">
         <h4>Survey #2 — Post-NAO Robot</h4>
@@ -506,10 +521,12 @@
 
       <div class="reminder">Wait for participant to finish. Stay available for questions.</div>
 
+      <div class="spoken">"Great, thank you. Let’s move on to the second module."</div>
+
       <div class="timer-block">
-        <div class="timer-display" id="timer-s4">8:00</div>
-        <button class="timer-btn timer-start" onclick="startTimer('s4', 8)">Start</button>
-        <button class="timer-btn timer-reset" onclick="resetTimer('s4', 8)">Reset</button>
+        <div class="timer-display" id="timer-s4">13:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s4', 13)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s4', 13)">Reset</button>
         <span class="timer-label">Section timer</span>
       </div>
     </div>
@@ -519,10 +536,12 @@
   <div class="section-card" id="s5">
     <div class="section-header">
       <h2>SECTION 5: Interactive AR Training Module</h2>
-      <span class="timing">~7 min</span>
+      <span class="timing">~11 min</span>
     </div>
     <div class="section-body">
       <div class="action">Click Next to the Recitation slide</div>
+
+      <div class="spoken">"Before I play these clips, a quick note on the video format: each clip shows two perspectives. The regular view is a representation of what the child sees in the AR environment. The stereo view — the split-screen view — is what actually appears on the child's screen through the AR headset."</div>
 
       <div class="spoken">"Great, thank you. The AR training module has two parts. In this first part, before the AR scenario begins, the AI voice coach asks the child to recall the four safety rules. I'll show you four clips covering the different ways a child might respond."</div>
 
@@ -536,7 +555,7 @@
 
       <div class="action">Click through both clips, then click Next to the Survey #3 slide</div>
 
-      <div class="timing-note">6 clips total across both parts — ~4–6 min</div>
+      <div class="timing-note">6 clips total across both parts — ~9 min</div>
 
       <div class="spoken">"Thanks for watching. I'll now send over the survey for this module."</div>
 
@@ -551,14 +570,14 @@
         </div>
       </div>
 
-      <div class="timing-note">Survey completion: ~2 min</div>
+      <div class="timing-note">Survey completion: ~1–2 min</div>
 
       <div class="reminder">Wait for participant to finish.</div>
 
       <div class="timer-block">
-        <div class="timer-display" id="timer-s5">7:00</div>
-        <button class="timer-btn timer-start" onclick="startTimer('s5', 7)">Start</button>
-        <button class="timer-btn timer-reset" onclick="resetTimer('s5', 7)">Reset</button>
+        <div class="timer-display" id="timer-s5">11:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s5', 11)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s5', 11)">Reset</button>
         <span class="timer-label">Section timer</span>
       </div>
     </div>
@@ -568,7 +587,7 @@
   <div class="section-card" id="transition">
     <div class="section-header" style="background:#4a6fa5;">
       <h2>TRANSITION: Training → Testing Phase</h2>
-      <span class="timing">~2 min</span>
+      <span class="timing">~1 min</span>
     </div>
     <div class="section-body">
       <div class="spoken">"That wraps up the training phase. The last part is the testing phase, where you'll see three scenarios — kitchen, garage, and bedroom — of a child encountering an unsecured firearm. After those, you'll complete one final survey."</div>
@@ -582,26 +601,41 @@
   <div class="section-card" id="s6">
     <div class="section-header">
       <h2>SECTION 6: Interactive AR Testing Module (3 Scenarios)</h2>
-      <span class="timing">~15 min</span>
+      <span class="timing">~8 min</span>
     </div>
     <div class="section-body">
       <div class="action">Click Next to the Testing slide</div>
 
-      <div class="spoken">"The last module shows three testing scenarios — kitchen, garage, and bedroom — where a child encounters an unsecured firearm while doing an everyday task. For each room I'll show you two clips: one where the child does the right thing, and one where they reach for the gun. Pay attention to how realistic the scenarios feel, whether the feedback is appropriate, and whether any of this could cause distress in young children."</div>
+      <div class="spoken">"We will now be going over the Interactive AR Testing Module. It will have 3 staged AR realistic testing scenarios where the child must apply the safety steps independently. The first scenario will be a kitchen at a friend's house where the child finds a gun on the table. The second scenario will be a garage at a friend's house where the child finds a gun in a safe. Finally, the third scenario will be in a parent's bedroom at a friend's birthday party where the child finds a gun in a closet. We will show each scenario with two outcomes: the child does the correct response of correctly performing and verbalizing all four safety steps, or does the incorrect response of physically reaching toward or touching the firearm."</div>
 
-      <div class="action">Click through all 6 clips: Kitchen (correct / incorrect) → Garage (correct / incorrect) → Bedroom (correct / incorrect)</div>
+      <div class="spoken">"As you watch, pay attention to how realistic the scenarios feel, whether the feedback the system gives is appropriate, the tone escalation when a child makes an incorrect choice, and whether any of this could cause distress in young children."</div>
 
-      <div class="timing-note">6 clips total — ~12–15 min depending on pacing</div>
+      <div class="spoken">"We will start with the kitchen scenario with the correct response."</div>
 
-      <div class="reminder">Each room has 2 side-by-side cards. You can briefly pause between rooms to check in with the participant.</div>
+      <div class="action">Play Kitchen — Correct Response</div>
 
-      <div style="margin: 10px 0; font-size: 13px; color: #374151;"><strong>Optional between rooms:</strong></div>
-      <div class="spoken">"Ready for the next one?"</div>
+      <div class="spoken">"Here is the same scenario now with the incorrect response."</div>
+
+      <div class="action">Play Kitchen — Incorrect Response</div>
+
+      <div class="spoken">"Now the same but for the garage scenario."</div>
+
+      <div class="action">Play Garage — Correct Response</div>
+
+      <div class="action">Play Garage — Incorrect Response</div>
+
+      <div class="spoken">"Now the same but for the bedroom scenario."</div>
+
+      <div class="action">Play Bedroom — Correct Response</div>
+
+      <div class="action">Play Bedroom — Incorrect Response</div>
+
+      <div class="timing-note">6 clips total — ~7–8 min</div>
 
       <div class="timer-block">
-        <div class="timer-display" id="timer-s6">15:00</div>
-        <button class="timer-btn timer-start" onclick="startTimer('s6', 15)">Start</button>
-        <button class="timer-btn timer-reset" onclick="resetTimer('s6', 15)">Reset</button>
+        <div class="timer-display" id="timer-s6">8:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s6', 8)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s6', 8)">Reset</button>
         <span class="timer-label">Section timer</span>
       </div>
     </div>
@@ -611,10 +645,10 @@
   <div class="section-card" id="s7">
     <div class="section-header">
       <h2>SECTION 7: Post-Simulation Survey</h2>
-      <span class="timing">~10 min</span>
+      <span class="timing">~4 min</span>
     </div>
     <div class="section-body">
-      <div class="spoken">"Thank you for watching all three scenarios. This last survey is the most detailed one. It covers the scenario realism, age-appropriateness, the corrective feedback strategy, potential for emotional distress, and your thoughts on implementation feasibility. Take your time with this one."</div>
+      <div class="spoken">"Thank you for watching all three scenarios. This last survey is the most detailed one. It covers the 3 scenarios' realism, age-appropriateness, the corrective feedback strategy, potential for emotional distress, and your thoughts on implementation feasibility. Take your time with this one and please ask if you have any questions."</div>
 
       <div class="action">Paste Survey #4 (Post-AR Simulation) link in Zoom chat</div>
 
@@ -627,14 +661,14 @@
         </div>
       </div>
 
-      <div class="timing-note">Survey completion: ~10 min</div>
+      <div class="timing-note">Survey completion: ~2–4 min</div>
 
-      <div class="reminder">This is the longest survey. Stay patient and available for questions. Don't rush them.</div>
+      <div class="reminder">Most detailed survey — stay available for questions. Don't rush them.</div>
 
       <div class="timer-block">
-        <div class="timer-display" id="timer-s7">10:00</div>
-        <button class="timer-btn timer-start" onclick="startTimer('s7', 10)">Start</button>
-        <button class="timer-btn timer-reset" onclick="resetTimer('s7', 10)">Reset</button>
+        <div class="timer-display" id="timer-s7">4:00</div>
+        <button class="timer-btn timer-start" onclick="startTimer('s7', 4)">Start</button>
+        <button class="timer-btn timer-reset" onclick="resetTimer('s7', 4)">Reset</button>
         <span class="timer-label">Section timer</span>
       </div>
     </div>
@@ -644,14 +678,14 @@
   <div class="section-card" id="s8">
     <div class="section-header">
       <h2>SECTION 8: Closing &amp; Thank You</h2>
-      <span class="timing">~3 min</span>
+      <span class="timing">~2 min</span>
     </div>
     <div class="section-body">
       <div class="spoken">"That's everything! Thank you so much for your time and expertise today. Your feedback is incredibly valuable and will directly help us refine the system before we move to any testing with children."</div>
 
       <div class="spoken">"Just as a reminder, all of your responses are de-identified and linked only by a study ID number. The link file connecting your name to your ID will be destroyed once data collection is complete."</div>
 
-      <div class="spoken">"Do you have any final questions or comments about the study, the system, or anything we covered today?"</div>
+      <div class="spoken">Before we wrap up, we'd like to open the floor for about 5 minutes for any final questions, comments, or general discussion. This can be about the study, the system, or anything we covered today - we'd really value any additional thoughts you have."</div>
 
       <div class="reminder">Answer any final questions.</div>
 

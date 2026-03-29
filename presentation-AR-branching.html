@@ -20,21 +20,35 @@
       --border: #334155;
       --text: #f1f5f9;
       --muted: #94a3b8;
+      --slide-gutter-x: clamp(18px, 3.8vw, 56px);
+      --slide-pad-top: clamp(18px, 2.6vw, 30px);
+      --slide-pad-bottom: clamp(14px, 2vw, 20px);
+      --measure-compact: min(100%, 760px);
+      --measure-reading: min(100%, 920px);
+      --measure-wide: min(100%, 1180px);
+      --measure-flow: min(100%, 1220px);
+      --fz-title-xl: clamp(2rem, 3vw, 2.85rem);
+      --fz-title-lg: clamp(1.7rem, 2.3vw, 2.15rem);
+      --fz-title-md: clamp(1.35rem, 1.8vw, 1.7rem);
+      --fz-body-lg: clamp(.98rem, 1.15vw, 1.1rem);
+      --fz-body: clamp(.92rem, .98vw, 1rem);
+      --fz-body-sm: clamp(.84rem, .82vw, .92rem);
+      --fz-caption: clamp(.74rem, .72vw, .82rem);
     }
 
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; }
     #app { display: flex; flex-direction: column; height: 100vh; }
 
     /* ── TOP BAR ── */
-    #topbar { display: flex; align-items: center; justify-content: space-between; background: var(--navy); padding: 0 24px; height: 52px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
-    #topbar-title { font-size: 13px; font-weight: 700; color: #fff; }
-    #topbar-subtitle { font-size: 11px; color: rgba(255,255,255,.5); }
-    #step-indicator { font-size: 12px; color: rgba(255,255,255,.6); background: rgba(255,255,255,.1); padding: 4px 12px; border-radius: 20px; }
+    #topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--navy); padding: 0 var(--slide-gutter-x); height: clamp(48px, 6vw, 58px); flex-shrink: 0; border-bottom: 1px solid var(--border); }
+    #topbar-title { font-size: var(--fz-body-sm); font-weight: 700; color: #fff; }
+    #topbar-subtitle { font-size: var(--fz-caption); color: rgba(255,255,255,.58); }
+    #step-indicator { font-size: var(--fz-caption); color: rgba(255,255,255,.7); background: rgba(255,255,255,.1); padding: 4px 12px; border-radius: 20px; white-space: nowrap; }
 
     /* ── STEP PROGRESS ── */
-    #step-progress { display: flex; background: var(--card); padding: 0 24px; height: 44px; align-items: center; flex-shrink: 0; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    #step-progress { display: flex; background: var(--card); padding: 0 var(--slide-gutter-x); height: clamp(40px, 5vw, 46px); align-items: center; flex-shrink: 0; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
     #step-progress::-webkit-scrollbar { display: none; }
-    .step-pill { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--muted); cursor: pointer; transition: all .2s; flex-shrink: 0; }
+    .step-pill { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 20px; font-size: var(--fz-caption); font-weight: 600; white-space: nowrap; color: var(--muted); cursor: pointer; transition: all .2s; flex-shrink: 0; }
     .step-pill:hover { color: var(--text); }
     .step-pill.active { background: var(--accent); color: #fff; }
     .step-pill.done { color: var(--green); }
@@ -43,65 +57,73 @@
 
     /* ── SLIDE AREA ── */
     #slide-area { flex: 1; overflow: hidden; position: relative; }
-    .slide { display: none; height: 100%; padding: 28px 48px 16px; overflow-y: auto; animation: fadeIn .25s ease; }
-    .slide.active { display: flex; flex-direction: column; justify-content: center; }
+    .slide { display: none; height: 100%; padding: var(--slide-pad-top) var(--slide-gutter-x) var(--slide-pad-bottom); overflow-y: auto; animation: fadeIn .25s ease; }
+    .slide.active { display: flex; flex-direction: column; justify-content: flex-start; }
+
+    /* Visually center content when it fits, but fall back to top-aligned scrolling on small screens */
+    .slide-cover::before, .slide-cover::after,
+    .slide-survey::before, .slide-survey::after,
+    .slide-wait::before, .slide-wait::after,
+    .phase-intro::before, .phase-intro::after,
+    .slide-closing::before, .slide-closing::after,
+    .slide-module-preview::before, .slide-module-preview::after { content: ''; display: block; flex: 1 0 0; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
     /* ── SHARED SLIDE TYPES ── */
     .slide-cover { text-align: center; align-items: center; }
-    .cover-badge { background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; padding: 5px 14px; border-radius: 20px; display: inline-block; margin-bottom: 20px; }
-    .slide-cover h1 { font-size: 38px; font-weight: 800; line-height: 1.15; margin-bottom: 12px; }
+    .cover-badge { background: var(--accent); color: #fff; font-size: var(--fz-caption); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; padding: 5px 14px; border-radius: 20px; display: inline-block; margin-bottom: 20px; }
+    .slide-cover h1 { font-size: var(--fz-title-xl); font-weight: 800; line-height: 1.12; margin-bottom: 14px; }
     .slide-cover h1 span { color: var(--accent); }
-    .slide-cover .sub { font-size: 15px; color: var(--muted); max-width: 520px; line-height: 1.6; margin: 0 auto 28px; }
-    .slide-cover .meta { font-size: 13px; color: var(--muted); }
-    .overview-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 20px; max-width: 560px; width: 100%; margin-left: auto; margin-right: auto; }
-    .overview-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px 20px; }
-    .overview-card .num { font-size: 28px; font-weight: 800; color: var(--accent); margin-bottom: 8px; }
-    .overview-card h3 { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
-    .overview-card p { font-size: 13px; color: var(--muted); line-height: 1.5; }
-    .phase-intro { align-items: center; text-align: center; justify-content: center; }
-    .phase-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); margin-bottom: 10px; }
-    .phase-intro h2 { font-size: 32px; font-weight: 800; margin-bottom: 12px; }
-    .phase-intro p { font-size: 15px; color: var(--muted); max-width: 480px; line-height: 1.6; }
-    .slide-survey { align-items: center; text-align: center; justify-content: center; gap: 24px; }
-    .slide-wait { align-items: center; text-align: center; justify-content: center; gap: 20px; }
-    .slide-wait h2, .slide-survey h2 { font-size: 26px; font-weight: 800; }
-    .slide-wait p, .slide-survey p { font-size: 14px; color: var(--muted); max-width: 460px; line-height: 1.6; }
+    .slide-cover .sub { font-size: var(--fz-body-lg); color: var(--muted); max-width: var(--measure-reading); line-height: 1.6; margin: 0 auto 28px; }
+    .slide-cover .meta { font-size: var(--fz-body-sm); color: var(--muted); }
+    .overview-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 20px; max-width: var(--measure-compact); width: 100%; margin-left: auto; margin-right: auto; }
+    .overview-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px 20px; transition: opacity .35s ease, transform .35s ease, box-shadow .35s ease, border-color .35s ease; }
+    .overview-card .num { font-size: clamp(1.8rem, 2.6vw, 2.2rem); font-weight: 800; color: var(--accent); margin-bottom: 8px; }
+    .overview-card h3 { font-size: clamp(1rem, 1.2vw, 1.08rem); font-weight: 700; margin-bottom: 8px; }
+    .overview-card p { font-size: var(--fz-body); color: var(--muted); line-height: 1.58; }
+    .phase-intro { align-items: center; text-align: center; }
+    .phase-tag { font-size: var(--fz-caption); font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); margin-bottom: 10px; }
+    .phase-intro h2 { font-size: var(--fz-title-lg); font-weight: 800; margin-bottom: 12px; }
+    .phase-intro p { font-size: var(--fz-body-lg); color: var(--muted); max-width: var(--measure-reading); line-height: 1.6; }
+    .slide-survey { align-items: center; text-align: center; gap: 24px; }
+    .slide-wait { align-items: center; text-align: center; gap: 20px; }
+    .slide-wait h2, .slide-survey h2 { font-size: var(--fz-title-lg); font-weight: 800; }
+    .slide-wait p, .slide-survey p { font-size: var(--fz-body-lg); color: var(--muted); max-width: var(--measure-reading); line-height: 1.6; }
     .survey-icon { font-size: 52px; }
-    .survey-link-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 12px; width: 100%; max-width: 520px; }
-    .survey-link-url { flex: 1; font-family: monospace; font-size: 12.5px; color: var(--muted); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .survey-copy-btn { background: var(--accent); color: #fff; border: none; border-radius: 7px; padding: 8px 18px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: all .15s; flex-shrink: 0; }
+    .survey-link-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 12px; width: 100%; max-width: var(--measure-reading); }
+    .survey-link-url { flex: 1; font-family: monospace; font-size: var(--fz-body-sm); color: var(--muted); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .survey-copy-btn { background: var(--accent); color: #fff; border: none; border-radius: 7px; padding: 9px 18px; font-size: var(--fz-body-sm); font-weight: 700; cursor: pointer; white-space: nowrap; transition: all .15s; flex-shrink: 0; }
     .survey-copy-btn:hover { background: #2563eb; }
     .survey-copy-btn.copied { background: #16a34a; }
-    .survey-note { font-size: 12px; color: var(--muted); font-style: italic; }
-    .slide-closing { align-items: center; text-align: center; justify-content: center; gap: 16px; }
+    .survey-note { font-size: var(--fz-caption); color: var(--muted); font-style: italic; }
+    .slide-closing { align-items: center; text-align: center; gap: 16px; }
     .closing-check { font-size: 60px; }
-    .slide-closing h2 { font-size: 30px; font-weight: 800; }
-    .slide-closing p { font-size: 14px; color: var(--muted); max-width: 480px; line-height: 1.6; }
-    .contact-block { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 24px; font-size: 13px; line-height: 1.8; color: var(--muted); text-align: left; }
+    .slide-closing h2 { font-size: var(--fz-title-lg); font-weight: 800; }
+    .slide-closing p { font-size: var(--fz-body-lg); color: var(--muted); max-width: var(--measure-reading); line-height: 1.6; }
+    .contact-block { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 24px; font-size: var(--fz-body); line-height: 1.8; color: var(--muted); text-align: center; width: fit-content; max-width: min(100%, 520px); margin: 0 auto; }
     .contact-block a { color: var(--accent); text-decoration: none; }
-    .slide-section-h { font-size: 24px; font-weight: 800; margin-bottom: 6px; text-align: center; }
-    .slide-section-sub { font-size: 14px; color: var(--muted); margin-bottom: 20px; line-height: 1.5; max-width: 560px; text-align: center; margin-left: auto; margin-right: auto; }
+    .slide-section-h { font-size: var(--fz-title-md); font-weight: 800; margin-bottom: 8px; text-align: center; }
+    .slide-section-sub { font-size: var(--fz-body); color: var(--muted); margin-bottom: 20px; line-height: 1.6; max-width: var(--measure-reading); text-align: center; margin-left: auto; margin-right: auto; }
 
     /* ── BOTTOM NAV ── */
     #bottom-nav { display: flex; align-items: center; justify-content: space-between; background: var(--card); padding: 12px 24px; border-top: 1px solid var(--border); flex-shrink: 0; }
-    .nav-btn { display: flex; align-items: center; gap: 8px; background: var(--navy); color: #fff; border: none; border-radius: 8px; padding: 9px 20px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; }
+    .nav-btn { display: flex; align-items: center; gap: 8px; background: var(--navy); color: #fff; border: none; border-radius: 8px; padding: 9px 20px; font-size: var(--fz-body-sm); font-weight: 600; cursor: pointer; transition: all .15s; }
     .nav-btn:hover { background: var(--navy-light); }
     .nav-btn:disabled { opacity: .35; cursor: not-allowed; }
     .nav-btn.primary { background: var(--accent); }
     .nav-btn.primary:hover { background: #2563eb; }
-    #slide-counter { font-size: 12px; color: var(--muted); }
+    #slide-counter { font-size: var(--fz-caption); color: var(--muted); }
 
     /* ══════════════════════════════════════════
        FLOWCHART SLIDE
     ══════════════════════════════════════════ */
-    .slide-flowchart { justify-content: flex-start; gap: 0; padding-top: 28px; overflow-y: auto; }
+    .slide-flowchart { justify-content: flex-start; gap: 0; padding-top: var(--slide-pad-top); overflow-y: auto; }
     .slide.slide-flowchart.active { justify-content: flex-start; }
 
     .flowchart-header { text-align: center; margin-bottom: 8px; flex-shrink: 0; }
-    .flowchart-header .fc-module-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); margin-bottom: 4px; }
-    .flowchart-header h2 { font-size: 20px; font-weight: 800; }
-    .flowchart-header p { font-size: 13px; color: var(--muted); margin-top: 4px; max-width: 660px; margin-left: auto; margin-right: auto; }
+    .flowchart-header .fc-module-tag { font-size: var(--fz-caption); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); margin-bottom: 4px; }
+    .flowchart-header h2 { font-size: clamp(1.4rem, 1.8vw, 1.9rem); font-weight: 800; }
+    .flowchart-header p { font-size: var(--fz-body); color: var(--muted); margin-top: 6px; max-width: var(--measure-reading); margin-left: auto; margin-right: auto; }
 
     /* Phase sub-label strip */
     .fc-phase-strip {
@@ -130,15 +152,15 @@
       backdrop-filter: blur(8px);
       box-shadow: 0 8px 24px rgba(0,0,0,.22);
     }
-    .fc-prog-label { font-size: 11px; color: var(--muted); }
+    .fc-prog-label { font-size: var(--fz-caption); color: var(--muted); }
     .fc-prog-bar { width: 120px; height: 5px; background: var(--border); border-radius: 10px; overflow: hidden; }
     .fc-prog-fill { height: 100%; border-radius: 10px; transition: width .4s; }
-    .fc-prog-count { font-size: 11px; font-weight: 700; }
+    .fc-prog-count { font-size: var(--fz-caption); font-weight: 700; }
 
     .flowchart-canvas {
       position: relative;
       width: 100%;
-      max-width: 980px;
+      max-width: var(--measure-flow);
       margin: 12px auto 0;
       padding: 76px 0 36px;
       display: flex;
@@ -166,19 +188,19 @@
     .fc-root[data-variant="intro-purple"] .fc-node-type { color: var(--purple); }
 
     /* ── NAO LINEAR FLOW ── */
-    .nao-scroll-inner { flex: 1; min-height: 0; overflow-y: auto; width: 100%; display: flex; flex-direction: column; align-items: center; padding: 0 0 24px; }
+    .nao-scroll-inner { width: 100%; display: flex; flex-direction: column; align-items: center; padding: 0 0 24px; }
     .nao-flow { display: flex; flex-direction: column; align-items: center; width: 100%; padding-top: 14px; }
     .nao-intro-block { width: 320px; background: #000; border: 2px solid var(--purple); border-radius: 12px; overflow: hidden; flex-shrink: 0; }
     .nao-intro-top { padding: 8px 12px 0; }
-    .nao-intro-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--purple); margin-bottom: 2px; }
+    .nao-intro-label { font-size: var(--fz-caption); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--purple); margin-bottom: 2px; }
     .nao-intro-block .iframe-wrap { width: 100%; }
     .nao-intro-block .iframe-wrap iframe { width: 100%; height: 155px; display: block; border: none; }
-    .nao-age-note { font-size: 11px; color: var(--amber); background: rgba(245,158,11,.1); border-top: 1px solid rgba(245,158,11,.2); padding: 6px 12px; text-align: center; }
+    .nao-age-note { font-size: var(--fz-caption); color: var(--amber); background: rgba(245,158,11,.1); border-top: 1px solid rgba(245,158,11,.2); padding: 6px 12px; text-align: center; }
     .nao-connector { display: flex; flex-direction: column; align-items: center; margin: 4px 0; }
     .nao-connector-line { width: 2px; height: 22px; background: linear-gradient(to bottom, rgba(168,85,247,.5), rgba(168,85,247,.2)); }
     .nao-connector-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid rgba(168,85,247,.4); }
-    .nao-question-block { width: 100%; max-width: 700px; margin-bottom: 0; }
-    .nao-question-label { text-align: center; font-size: 12px; font-weight: 700; color: var(--purple); background: rgba(168,85,247,.1); border: 1px solid rgba(168,85,247,.25); border-radius: 8px; padding: 7px 16px; margin-bottom: 10px; transition: background .15s, border-color .15s, color .15s; }
+    .nao-question-block { width: 100%; max-width: min(100%, 860px); margin-bottom: 0; }
+    .nao-question-label { text-align: center; font-size: var(--fz-body-sm); font-weight: 700; color: var(--purple); background: rgba(168,85,247,.1); border: 1px solid rgba(168,85,247,.25); border-radius: 8px; padding: 8px 16px; margin-bottom: 10px; transition: background .15s, border-color .15s, color .15s; }
     @keyframes nao-label-flash { 0%,100% { background: rgba(168,85,247,.1); border-color: rgba(168,85,247,.25); color: var(--purple); } 40% { background: rgba(168,85,247,.35); border-color: rgba(168,85,247,.8); color: #fff; } }
     .nao-question-label.nao-highlight { animation: nao-label-flash 1.1s ease; }
     .nao-response-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -194,7 +216,7 @@
     .fc-nodes {
       position: relative;
       z-index: 2;
-      width: min(100%, 960px);
+      width: min(100%, 1080px);
       display: flex;
       flex-wrap: nowrap;
       justify-content: center;
@@ -218,17 +240,17 @@
     .fc-node[data-variant="incorrect"]:hover { border-color: var(--red); }
 
     /* Type label */
-    .fc-node-type { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 7px; }
+    .fc-node-type { font-size: var(--fz-caption); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 7px; }
     .fc-node[data-variant="lesson"]    .fc-node-type { color: var(--purple); }
     .fc-node[data-variant="correct"]   .fc-node-type { color: #4ade80; }
     .fc-node[data-variant="partial"]   .fc-node-type { color: var(--amber); }
     .fc-node[data-variant="incorrect"] .fc-node-type { color: #f87171; }
 
     .fc-node-icon { font-size: 28px; margin-bottom: 7px; line-height: 1; }
-    .fc-node-title { font-size: 12.5px; font-weight: 700; line-height: 1.35; margin-bottom: 5px; }
-    .fc-node-desc { font-size: 11px; color: var(--muted); line-height: 1.45; }
+    .fc-node-title { font-size: var(--fz-body-sm); font-weight: 700; line-height: 1.35; margin-bottom: 5px; }
+    .fc-node-desc { font-size: var(--fz-caption); color: var(--muted); line-height: 1.45; }
 
-    .fc-play-btn { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 10px; background: rgba(255,255,255,.07); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; font-size: 11.5px; font-weight: 600; color: var(--text); transition: all .15s; }
+    .fc-play-btn { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 10px; background: rgba(255,255,255,.07); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; font-size: var(--fz-caption); font-weight: 600; color: var(--text); transition: all .15s; }
     .fc-node:hover .fc-play-btn { background: rgba(255,255,255,.13); }
 
     /* ── ACTIVE CARD GLOW ── */
@@ -252,7 +274,7 @@
 
     .all-watched-banner { display: none; text-align: center; background: linear-gradient(135deg, #14532d, #166534); border: 1px solid #22c55e; border-radius: 10px; padding: 10px 20px; margin-top: 10px; flex-shrink: 0; }
     .all-watched-banner.visible { display: block; animation: fadeIn .4s ease; }
-    .all-watched-banner p { font-size: 13px; font-weight: 600; color: #bbf7d0; }
+    .all-watched-banner p { font-size: var(--fz-body-sm); font-weight: 600; color: #bbf7d0; }
 
     /* ══════════════════════════════════════════
        VIDEO MODAL
@@ -313,13 +335,26 @@
 
     /* Module spotlight slide */
     .slide-module-preview { align-items: center; }
-    .mp-eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); margin-bottom: 6px; }
-    .overview-card.oc-active { border-color: var(--accent); border-width: 2px; box-shadow: 0 0 0 3px rgba(59,130,246,.18), 0 4px 20px rgba(59,130,246,.15); position: relative; }
-    .overview-card.oc-inactive { opacity: .3; }
-    .mp-badge { position: absolute; top: -11px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; padding: 3px 12px; border-radius: 20px; white-space: nowrap; }
+    .mp-eyebrow { font-size: var(--fz-caption); font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); margin-bottom: 6px; }
+    .overview-card.oc-active { border-color: var(--accent); border-width: 2px; box-shadow: 0 0 0 3px rgba(59,130,246,.18), 0 4px 20px rgba(59,130,246,.15); position: relative; z-index: 10; }
+    .overview-card.oc-inactive { opacity: .4; }
+    .mp-badge { position: absolute; top: -11px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; padding: 3px 12px; border-radius: 20px; white-space: nowrap; opacity: 0; transition: opacity .2s ease; pointer-events: none; }
+
+    .overview-card.card-expand { box-shadow: 0 0 0 3px rgba(59,130,246,.18), 0 4px 20px rgba(59,130,246,.15); }
+    .overview-card.oc-active .mp-badge { opacity: 1; }
+    @keyframes moduleCardHop {
+      0% { transform: scale(1); }
+      35% { transform: scale(1.03); }
+      100% { transform: scale(1); }
+    }
+    .overview-card.card-hop { animation: moduleCardHop .76s cubic-bezier(.34, 1.4, .64, 1); }
+    .mp-card-details { max-height: 0; opacity: 0; overflow: hidden; transition: max-height .4s ease, opacity .3s ease, padding-top .3s ease; padding-top: 0; }
+    .mp-card-details.expanded { max-height: 200px; opacity: 1; padding-top: 8px; }
+    .mp-card-details p { font-size: 12px; color: var(--text); line-height: 1.5; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 0; }
+    .mp-card-details .mp-detail-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--accent); margin-bottom: 4px; }
 
     /* Sim room-grouped layout */
-    .room-label { text-align: center; font-size: 12px; font-weight: 700; color: var(--green); background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.25); border-radius: 8px; padding: 7px 16px; margin-bottom: 10px; }
+    .room-label { text-align: center; font-size: var(--fz-body-sm); font-weight: 700; color: var(--green); background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.25); border-radius: 8px; padding: 7px 16px; margin-bottom: 10px; }
     .sim-response-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
     .sim-response-grid .fc-node { width: auto; }
     .sim-connector .nao-connector-line { background: linear-gradient(to bottom, rgba(34,197,94,.5), rgba(34,197,94,.2)); }
@@ -329,11 +364,11 @@
     .slide-video { gap: 16px; justify-content: flex-start; }
     .video-header { flex-shrink: 0; }
     .video-header .module-tag {
-      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+      font-size: var(--fz-caption); font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
       color: var(--accent); margin-bottom: 6px;
     }
-    .video-header h2 { font-size: 22px; font-weight: 800; margin-bottom: 4px; }
-    .video-header p { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+    .video-header h2 { font-size: var(--fz-title-md); font-weight: 800; margin-bottom: 4px; }
+    .video-header p { font-size: var(--fz-body); color: var(--muted); line-height: 1.5; max-width: var(--measure-reading); }
     .video-wrapper {
       flex: 1; min-height: 0;
       background: #000;
@@ -345,6 +380,55 @@
     }
     .video-wrapper iframe {
       width: 100%; height: 100%; border: none; display: block;
+    }
+
+    .slide-overview .overview-grid { max-width: min(100%, 920px); }
+    .slide-module-preview .overview-grid { max-width: min(100%, 920px); }
+
+    @media (max-width: 1180px) {
+      :root {
+        --slide-gutter-x: clamp(16px, 3vw, 34px);
+        --measure-reading: min(100%, 840px);
+        --measure-wide: min(100%, 1040px);
+      }
+      .slide-overview .overview-grid { max-width: min(100%, 920px); }
+      .survey-link-box { max-width: 100%; }
+      .flowchart-progress { top: 12px; right: 12px; }
+    }
+
+    @media (max-width: 900px) {
+      :root {
+        --slide-gutter-x: 18px;
+        --slide-pad-top: 16px;
+      }
+      #topbar { height: 46px; }
+      #step-progress { height: 38px; }
+      #bottom-nav { padding: 10px 18px; }
+      .survey-link-box { flex-wrap: wrap; justify-content: center; }
+      .survey-link-url { width: 100%; white-space: normal; overflow: visible; text-overflow: clip; text-align: center; }
+      .survey-copy-btn { width: 100%; justify-content: center; }
+      .flowchart-progress { position: static; margin: 10px auto 0; width: fit-content; }
+      .flowchart-canvas { padding-top: 24px; }
+      .fc-nodes { width: 100%; gap: 14px; padding: 0; overflow-x: auto; justify-content: flex-start; }
+      .fc-node { flex: 0 0 210px; }
+      .nao-response-grid { grid-template-columns: 1fr; }
+      .sim-response-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+      :root {
+        --slide-gutter-x: 14px;
+        --slide-pad-top: 14px;
+        --slide-pad-bottom: 12px;
+      }
+      #topbar { padding-top: 6px; padding-bottom: 6px; height: auto; align-items: flex-start; }
+      #topbar-subtitle { display: none; }
+      #step-indicator { padding: 3px 9px; }
+      #bottom-nav { gap: 8px; }
+      .nav-btn { padding: 8px 12px; }
+      #slide-counter { min-width: 56px; text-align: center; }
+      .contact-block { padding: 14px 16px; }
+      .nao-intro-block { width: min(100%, 320px); }
     }
   </style>
 </head>
@@ -375,8 +459,19 @@
       <p class="meta" style="margin-top: 8px; color: #4ade80;">IRB Approved &nbsp;·&nbsp; Protocol #8042</p>
     </div>
 
-    <!-- 1: Overview -->
-    <div class="slide" data-label="Overview">
+    <!-- 1: Survey 1 -->
+    <div class="slide slide-wait" data-label="Survey #1">
+      <h2>Pre-Task Demographics Survey</h2>
+      <p>Please complete the brief background survey sent to you in the Zoom chat.</p>
+      <div class="survey-link-box">
+        <span class="survey-link-url" id="survey-url-1">https://virginia.az1.qualtrics.com/jfe/form/SV_b1nmZX3L8lqSlD0</span>
+        <button class="survey-copy-btn" onclick="copySurvey('survey-url-1', this)">Copy Link</button>
+      </div>
+      <div class="survey-note">Let the facilitator know when you're done.</div>
+    </div>
+
+    <!-- 2: Overview -->
+    <div class="slide slide-overview" data-label="Overview">
       <div class="slide-section-h">What You'll Be Evaluating</div>
       <div class="slide-section-sub">Today's session has three modules, evaluated in order. After each, you'll complete a short Qualtrics survey.</div>
       <div class="slide-section-sub" style="margin-top: -8px; font-size: 13px;">While each module has its own evaluation, please keep in mind that together they form a single sequential program — a child would experience all three in order. Evaluate each module on its own merits, but consider how it fits within that overall experience.</div>
@@ -399,35 +494,28 @@
       </div>
     </div>
 
-    <!-- 2: Survey 1 -->
-    <div class="slide slide-wait" data-label="Survey #1">
-      <h2>Pre-Task Demographics Survey</h2>
-      <p>Please complete the brief background survey sent to you in the Zoom chat.</p>
-      <div class="survey-link-box">
-        <span class="survey-link-url" id="survey-url-1">https://virginia.az1.qualtrics.com/jfe/form/SV_b1nmZX3L8lqSlD0</span>
-        <button class="survey-copy-btn" onclick="copySurvey('survey-url-1', this)">Copy Link</button>
-      </div>
-      <div class="survey-note">Let the facilitator know when you're done.</div>
-    </div>
-
     <!-- 4: Module 1 spotlight -->
     <div class="slide slide-module-preview" data-label="▶ Module 1">
       <div class="mp-eyebrow">Up Next</div>
       <div class="slide-section-h">What You'll Be Evaluating</div>
       <div class="slide-section-sub">Today's session has three modules, evaluated in order. After each, you'll complete a short Qualtrics survey.</div>
-      <div class="overview-grid">
-        <div class="overview-card oc-active">
+      <div class="overview-grid" id="mp-grid-1">
+        <div class="overview-card" id="mp-card-1">
           <div class="mp-badge">▶ Up Next</div>
           <div class="num">01</div>
           <h3>NAO Robot Guided Training Module</h3>
           <p>A social robot delivers a firearm-safety lesson teaching four key steps: Stop, Don't Touch, Run Away, Tell an Adult.</p>
+          <div class="mp-card-details">
+            <div class="mp-detail-label">Video Subjects</div>
+            <p>The people shown in these videos are members of our project team, not children. The content is still intended to be engaging and understandable for children ages 4-7. Closed captions were added to the videos and were not seen by the users.</p>
+          </div>
         </div>
-        <div class="overview-card oc-inactive">
+        <div class="overview-card">
           <div class="num">02</div>
           <h3>Interactive AR Training Module</h3>
           <p>The child verbally recites the safety rules, then physically acts them out in AR with an AI voice coach.</p>
         </div>
-        <div class="overview-card oc-inactive">
+        <div class="overview-card">
           <div class="num">03</div>
           <h3>Interactive AR Testing Module</h3>
           <p>Three staged AR testing scenarios in the kitchen, garage, and bedroom where the child must apply the safety steps independently.</p>
@@ -680,17 +768,21 @@
       <div class="mp-eyebrow">Up Next</div>
       <div class="slide-section-h">What You'll Be Evaluating</div>
       <div class="slide-section-sub">Today's session has three modules, evaluated in order. After each, you'll complete a short Qualtrics survey.</div>
-      <div class="overview-grid">
+      <div class="overview-grid" id="mp-grid-2">
         <div class="overview-card oc-inactive">
           <div class="num">01</div>
           <h3>NAO Robot Guided Training Module</h3>
           <p>A social robot delivers a firearm-safety lesson teaching four key steps: Stop, Don't Touch, Run Away, Tell an Adult.</p>
         </div>
-        <div class="overview-card oc-active">
+        <div class="overview-card" id="mp-card-2">
           <div class="mp-badge">▶ Up Next</div>
           <div class="num">02</div>
           <h3>Interactive AR Training Module</h3>
           <p>The child verbally recites the safety rules, then physically acts them out in AR with an AI voice coach.</p>
+          <div class="mp-card-details">
+            <div class="mp-detail-label">Video Format Note</div>
+            <p>Clips are shown in two views: <strong>Regular view</strong> is a representation of what the child is actually seeing, while <strong>Stereo view</strong> (split-screen) shows what appears on the phone screen.</p>
+          </div>
         </div>
         <div class="overview-card oc-inactive">
           <div class="num">03</div>
@@ -810,7 +902,7 @@
       <div class="mp-eyebrow">Up Next</div>
       <div class="slide-section-h">What You'll Be Evaluating</div>
       <div class="slide-section-sub">Today's session has three modules, evaluated in order. After each, you'll complete a short Qualtrics survey.</div>
-      <div class="overview-grid">
+      <div class="overview-grid" id="mp-grid-3">
         <div class="overview-card oc-inactive">
           <div class="num">01</div>
           <h3>NAO Robot Guided Training Module</h3>
@@ -821,11 +913,15 @@
           <h3>Interactive AR Training Module</h3>
           <p>The child verbally recites the safety rules, then physically acts them out in AR with an AI voice coach.</p>
         </div>
-        <div class="overview-card oc-active">
+        <div class="overview-card" id="mp-card-3">
           <div class="mp-badge">▶ Up Next</div>
           <div class="num">03</div>
           <h3>Interactive AR Testing Module</h3>
           <p>Three staged AR testing scenarios in the kitchen, garage, and bedroom where the child must apply the safety steps independently.</p>
+          <div class="mp-card-details">
+            <div class="mp-detail-label">AI Coach Note</div>
+            <p>The AI coach is given the same prompt for each environment, but the exact words it uses in each situation are not predetermined.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -1401,7 +1497,7 @@
     progressBar.appendChild(pill);
   });
 
-  function goTo(n) {
+  function goToBase(n) {
     slides[current].classList.remove('active');
     document.getElementById('pill-' + current)?.classList.remove('active');
     if (current < n) document.getElementById('pill-' + current)?.classList.add('done');
@@ -1420,6 +1516,10 @@
     if (fcId) requestAnimationFrame(() => drawConnectors(fcId));
   }
 
+  function goTo(n) {
+    goToBase(n);
+  }
+
   function nextSlide() { goTo(current + 1); }
   function prevSlide() { goTo(current - 1); }
 
@@ -1435,6 +1535,81 @@
       btn.textContent = 'Copied!'; btn.classList.add('copied');
       setTimeout(() => { btn.textContent = 'Copy Link'; btn.classList.remove('copied'); }, 2000);
     });
+  }
+
+  // ── MODULE PREVIEW TRANSITION ──
+  let modulePreviewToken = 0;
+  const modulePreviewSlides = {
+    3: { gridId: 'mp-grid-1', targetIndex: 0, previousIndex: null },
+    6: { gridId: 'mp-grid-2', targetIndex: 1, previousIndex: 0 },
+    10: { gridId: 'mp-grid-3', targetIndex: 2, previousIndex: 1 }
+  };
+
+  function resetModulePreviewCards(cards) {
+    cards.forEach(card => {
+      card.classList.remove('oc-active', 'oc-inactive', 'card-expand', 'card-hop');
+      card.querySelector('.mp-card-details')?.classList.remove('expanded');
+    });
+  }
+
+  function activateModulePreviewCard(card) {
+    if (!card) return;
+    card.classList.remove('oc-inactive');
+    card.classList.add('oc-active', 'card-expand');
+    card.querySelector('.mp-card-details')?.classList.add('expanded');
+  }
+
+  function animateModulePreview({ gridId, targetIndex, previousIndex }) {
+    const grid = document.getElementById(gridId);
+    if (!grid) return;
+
+    const cards = Array.from(grid.querySelectorAll('.overview-card'));
+    const targetCard = cards[targetIndex];
+    const previousCard = previousIndex === null ? null : cards[previousIndex];
+    if (!targetCard) return;
+
+    modulePreviewToken += 1;
+    const token = modulePreviewToken;
+
+    resetModulePreviewCards(cards);
+    cards.forEach((card, index) => {
+      if (index !== targetIndex && index !== previousIndex) {
+        card.classList.add('oc-inactive');
+      }
+    });
+
+    if (!previousCard) {
+      setTimeout(() => {
+        if (token !== modulePreviewToken) return;
+        activateModulePreviewCard(targetCard);
+        targetCard.classList.remove('card-hop');
+        void targetCard.offsetWidth;
+        targetCard.classList.add('card-hop');
+      }, 150);
+      return;
+    }
+
+    activateModulePreviewCard(previousCard);
+
+    setTimeout(() => {
+      if (token !== modulePreviewToken) return;
+      previousCard.classList.remove('oc-active', 'card-expand', 'card-hop');
+      previousCard.querySelector('.mp-card-details')?.classList.remove('expanded');
+      previousCard.classList.add('oc-inactive');
+      activateModulePreviewCard(targetCard);
+      targetCard.classList.remove('card-hop');
+      void targetCard.offsetWidth;
+      targetCard.classList.add('card-hop');
+    }, 550);
+  }
+
+  function goTo(n) {
+    goToBase(n);
+
+    const slideConfig = modulePreviewSlides[n];
+    if (slideConfig) {
+      setTimeout(() => animateModulePreview(slideConfig), 100);
+    }
   }
 
   goTo(0);
